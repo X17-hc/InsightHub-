@@ -1,0 +1,32 @@
+# 环境与密钥
+.env
+*.pem
+*.key
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Java
+target/
+*.class
+*.jar
+!.mvn/wrapper/maven-wrapper.jar
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# InsightHub 本机 MySQL 运行时数据
+deploy/runtime/
+
+# 本地数据与日志
+*.log
+*.sqlite3
+my_knowledge_db/

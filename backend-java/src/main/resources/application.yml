@@ -1,0 +1,24 @@
+server:
+  port: ${JAVA_SERVER_PORT:8080}
+
+spring:
+  application:
+    name: insighthub-backend
+  datasource:
+    url: ${MYSQL_JDBC_URL:jdbc:mysql://127.0.0.1:3306/insighthub?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai}
+    username: ${MYSQL_USER:insighthub}
+    password: ${MYSQL_PASSWORD:123456}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+
+insighthub:
+  agent:
+    base-url: ${AGENT_BASE_URL:http://127.0.0.1:8000}
+    connect-timeout-ms: 5000
+    read-timeout-ms: 300000
+  demo:
+    user-id: user-demo
+    workspace-id: workspace-demo
+
+logging:
+  level:
+    com.insighthub: INFO
