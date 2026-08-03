@@ -6,7 +6,7 @@ spring:
     name: insighthub-backend
   datasource:
     url: ${MYSQL_JDBC_URL:jdbc:mysql://127.0.0.1:3306/insighthub?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai}
-    username: ${MYSQL_USER:insighthub}
+    username: ${MYSQL_USER:root}
     password: ${MYSQL_PASSWORD:123456}
     driver-class-name: com.mysql.cj.jdbc.Driver
 
