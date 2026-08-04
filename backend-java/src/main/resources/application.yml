@@ -6,7 +6,7 @@ spring:
     name: insighthub-backend
   datasource:
     url: ${MYSQL_JDBC_URL:jdbc:mysql://127.0.0.1:3306/insighthub?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai}
-    username: ${MYSQL_USER:root}
+    username: ${MYSQL_USER:insighthub}
     password: ${MYSQL_PASSWORD:123456}
     driver-class-name: com.mysql.cj.jdbc.Driver
 
@@ -15,9 +15,31 @@ insighthub:
     base-url: ${AGENT_BASE_URL:http://127.0.0.1:8000}
     connect-timeout-ms: 5000
     read-timeout-ms: 300000
+  jwt:
+    # 至少 32 字节；生产务必通过 JWT_SECRET 覆盖
+    secret: ${JWT_SECRET:dev-only-change-me-please-use-long-secret}
+    access-expire-minutes: 120
+    refresh-expire-days: 7
   demo:
+    seed-enabled: ${DEMO_SEED_ENABLED:true}
     user-id: user-demo
     workspace-id: workspace-demo
+    user-b-id: user-demo-b
+    workspace-b-id: workspace-demo-b
+  docs:
+    # false 时 Knife4j/OpenAPI 需登录
+    public-access: ${DOCS_PUBLIC_ACCESS:true}
+
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
+  api-docs:
+    path: /v3/api-docs
+
+knife4j:
+  enable: true
+  setting:
+    language: zh_cn
 
 logging:
   level:

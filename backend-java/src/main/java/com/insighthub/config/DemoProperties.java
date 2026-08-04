@@ -1,29 +1,25 @@
 package com.insighthub.config;
 
+import lombok.AllArgsConstructor;
+import lombok.Data;
+import lombok.NoArgsConstructor;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 /**
- * 第 1 周演示用固定用户 / 工作空间。
+ * 演示用户 / 工作空间（隔离验收用双空间）。
  */
 @ConfigurationProperties(prefix = "insighthub.demo")
+@Data
+@NoArgsConstructor
+@AllArgsConstructor
 public class DemoProperties {
+
+    /** 是否在启动时写入演示账号与默认 Agent（生产应关闭）。 */
+    private boolean seedEnabled = true;
 
     private String userId = "user-demo";
     private String workspaceId = "workspace-demo";
+    private String userBId = "user-demo-b";
+    private String workspaceBId = "workspace-demo-b";
 
-    public String getUserId() {
-        return userId;
-    }
-
-    public void setUserId(String userId) {
-        this.userId = userId;
-    }
-
-    public String getWorkspaceId() {
-        return workspaceId;
-    }
-
-    public void setWorkspaceId(String workspaceId) {
-        this.workspaceId = workspaceId;
-    }
 }

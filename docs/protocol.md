@@ -1,7 +1,7 @@
-# InsightHub 服务通信协议（第 1 周）
+# InsightHub 服务通信协议
 
 > Java 平台服务 ↔ Python Agent 服务  
-> 第 1 周：同步 JSON（非 SSE）。事件 schema 本周定稿，流式推送见第 3 周。
+> 第 1 周：同步 JSON（非 SSE）。第 2 周：JWT + 工作空间隔离。流式推送见第 3 周。
 
 ---
 
@@ -104,10 +104,41 @@ X-Idempotency-Key: <taskId>-attempt-<n>
 
 ---
 
-## 4. Java 对外 API（第 1 周）
+## 4. Java 对外 API（第 2 周）
+
+### 4.1 鉴权
+
+| 接口 | 说明 |
+| --- | --- |
+| `POST /api/v1/auth/register` | 注册 |
+| `POST /api/v1/auth/login` | 返回 `accessToken` + `refreshToken` |
+| `POST /api/v1/auth/refresh` | 刷新令牌 |
+| `GET /api/v1/auth/me` | 当前用户（需 Bearer） |
+
+业务接口请求头：
 
 ```http
-POST /api/v1/research/tasks
+Authorization: Bearer <accessToken>
+```
+
+工作空间通过 URL 路径 `{workspaceId}` 指定；服务端校验当前用户为该空间成员，非成员返回 **403**。
+
+### 4.2 工作空间与 Agent
+
+| 接口 | 权限 |
+| --- | --- |
+| `POST/GET /api/v1/workspaces` | 登录用户 |
+| `GET /api/v1/workspaces/{id}` | 成员 |
+| `GET/POST /api/v1/workspaces/{id}/members` | 读：成员；写：OWNER/ADMIN |
+| `DELETE /api/v1/workspaces/{id}/members/{userId}` | OWNER/ADMIN |
+| `GET/POST /api/v1/workspaces/{workspaceId}/agents` | 读：成员；写：ADMIN+ |
+| `PUT .../agents/{agentId}`、`.../enable`、`.../disable` | ADMIN+ |
+
+### 4.3 研究任务（强制工作空间隔离）
+
+```http
+POST /api/v1/workspaces/{workspaceId}/research/tasks
+Authorization: Bearer <token>
 Content-Type: application/json
 ```
 
@@ -115,11 +146,19 @@ Content-Type: application/json
 { "query": "比较 Spring AI 和 LangChain4j 的多 Agent 能力" }
 ```
 
-响应与 Agent 成功响应字段对齐，并额外可含 Java 侧生成的 `traceId`。
+```http
+GET /api/v1/workspaces/{workspaceId}/research/tasks
+GET /api/v1/workspaces/{workspaceId}/research/tasks/{taskId}
+```
+
+响应与 Agent 成功响应字段对齐，并额外可含 Java 侧 `traceId`。  
+任务状态机（同步路径）：`CREATED → PLANNING → RUNNING → GENERATING → COMPLETED`（失败 → `FAILED`）。
+
+API 文档：`http://localhost:8080/doc.html`（Knife4j，Authorize 填 Bearer Token）。
 
 ---
 
 ## 5. 健康检查
 
 - Python：`GET /health` → `{ "status": "ok" }`
-- Java：`GET /actuator/health` 或 `GET /api/v1/health`
+- Java：`GET /api/v1/health`（无需登录）

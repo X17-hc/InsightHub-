@@ -1,11 +1,17 @@
 package com.insighthub.config;
 
+import lombok.AllArgsConstructor;
+import lombok.Data;
+import lombok.NoArgsConstructor;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 /**
  * Python Agent 服务连接配置。
  */
 @ConfigurationProperties(prefix = "insighthub.agent")
+@Data
+@NoArgsConstructor
+@AllArgsConstructor
 public class AgentProperties {
 
     /** Agent 服务根地址，例如 http://127.0.0.1:8000 */
@@ -17,27 +23,4 @@ public class AgentProperties {
     /** 读取超时（毫秒），长任务需放宽 */
     private int readTimeoutMs = 300000;
 
-    public String getBaseUrl() {
-        return baseUrl;
     }
-
-    public void setBaseUrl(String baseUrl) {
-        this.baseUrl = baseUrl;
-    }
-
-    public int getConnectTimeoutMs() {
-        return connectTimeoutMs;
-    }
-
-    public void setConnectTimeoutMs(int connectTimeoutMs) {
-        this.connectTimeoutMs = connectTimeoutMs;
-    }
-
-    public int getReadTimeoutMs() {
-        return readTimeoutMs;
-    }
-
-    public void setReadTimeoutMs(int readTimeoutMs) {
-        this.readTimeoutMs = readTimeoutMs;
-    }
-}

@@ -4,6 +4,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
@@ -16,6 +18,8 @@ import com.insighthub.web.dto.AgentTaskResponseDto;
  */
 @Component
 public class AgentServiceClient {
+
+    private static final Logger log = LoggerFactory.getLogger(AgentServiceClient.class);
 
     private final WebClient agentWebClient;
 
@@ -66,9 +70,13 @@ public class AgentServiceClient {
                     .bodyToMono(AgentTaskResponseDto.class)
                     .block();
         } catch (WebClientResponseException ex) {
-            throw new IllegalStateException(
-                    "Agent service error: HTTP " + ex.getStatusCode().value() + " " + ex.getResponseBodyAsString(),
-                    ex);
+            // 上游 body 仅记日志，避免泄漏到对外 API
+            log.warn(
+                    "Agent service HTTP {} taskId={} body={}",
+                    ex.getStatusCode().value(),
+                    taskId,
+                    ex.getResponseBodyAsString());
+            throw new IllegalStateException("Agent service error: HTTP " + ex.getStatusCode().value(), ex);
         }
     }
 }
