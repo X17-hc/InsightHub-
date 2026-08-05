@@ -1,0 +1,51 @@
+package com.insighthub.task;
+
+import java.util.EnumMap;
+import java.util.EnumSet;
+import java.util.Map;
+import java.util.Set;
+
+import org.springframework.stereotype.Component;
+
+import com.insighthub.common.BusinessException;
+
+/**
+ * 任务状态迁移校验。
+ */
+@Component
+public class TaskStateMachine {
+
+    private final Map<TaskStatus, Set<TaskStatus>> transitions = new EnumMap<>(TaskStatus.class);
+
+    public TaskStateMachine() {
+        transitions.put(TaskStatus.CREATED, EnumSet.of(TaskStatus.PLANNING, TaskStatus.CANCELLED));
+        transitions.put(TaskStatus.PLANNING, EnumSet.of(
+                TaskStatus.WAITING_APPROVAL, TaskStatus.RUNNING, TaskStatus.FAILED, TaskStatus.CANCELLED));
+        transitions.put(TaskStatus.WAITING_APPROVAL, EnumSet.of(TaskStatus.PLANNING, TaskStatus.RUNNING));
+        transitions.put(TaskStatus.RUNNING, EnumSet.of(
+                TaskStatus.PAUSED,
+                TaskStatus.REVIEWING,
+                TaskStatus.GENERATING,
+                TaskStatus.FAILED,
+                TaskStatus.CANCELLED));
+        transitions.put(TaskStatus.PAUSED, EnumSet.of(TaskStatus.RUNNING, TaskStatus.CANCELLED));
+        transitions.put(TaskStatus.REVIEWING, EnumSet.of(TaskStatus.RUNNING, TaskStatus.GENERATING));
+        transitions.put(TaskStatus.GENERATING, EnumSet.of(TaskStatus.COMPLETED, TaskStatus.FAILED));
+        transitions.put(TaskStatus.FAILED, EnumSet.of(TaskStatus.RUNNING));
+        transitions.put(TaskStatus.COMPLETED, EnumSet.noneOf(TaskStatus.class));
+        transitions.put(TaskStatus.CANCELLED, EnumSet.noneOf(TaskStatus.class));
+    }
+
+    /**
+     * 校验并返回目标状态；非法迁移抛 409。
+     */
+    public TaskStatus transition(TaskStatus from, TaskStatus to) {
+        Set<TaskStatus> allowed = transitions.getOrDefault(from, EnumSet.noneOf(TaskStatus.class));
+        if (!allowed.contains(to)) {
+            throw BusinessException.conflict(
+                    "INVALID_STATUS_TRANSITION",
+                    "cannot transition from " + from + " to " + to);
+        }
+        return to;
+    }
+}
