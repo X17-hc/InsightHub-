@@ -49,3 +49,12 @@ mvn -DskipTests spring-boot:run
 | `insighthub.demo.seed-enabled` / `DEMO_SEED_ENABLED` | 演示账号 seed，生产设 `false` |
 | `insighthub.docs.public-access` / `DOCS_PUBLIC_ACCESS` | Knife4j 是否匿名可访问 |
 | `insighthub.agent.base-url` | Python Agent 地址 |
+| `insighthub.task.*` | 超时 / 创建限流 / SSE 心跳 |
+| Redis | `spring.data.redis.*`（并发槽、限流、事件 Pub/Sub） |
+
+### 第 3 周任务 API
+
+- `POST .../research/tasks` → **202** 异步
+- `POST .../research/tasks/sync` → 同步（兼容旧演示）
+- `GET .../research/tasks/{id}/events` → SSE（`Last-Event-ID` / `fromEventNo`；仅此路径可用 `?access_token=`）
+- `POST .../pause|resume|cancel|retry`

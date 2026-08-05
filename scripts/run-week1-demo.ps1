@@ -1,4 +1,4 @@
-# InsightHub 第 1 周端到端演示（第 2 周起需 JWT + workspace 路径）
+# InsightHub 第 1 周端到端演示（第 3 周起同步路径为 /sync）
 
 $ErrorActionPreference = "Stop"
 $JavaBase = "http://127.0.0.1:8080"
@@ -15,10 +15,10 @@ $login = Invoke-RestMethod -Uri "$JavaBase/api/v1/auth/login" -Method Post -Body
 $token = $login.accessToken
 if (-not $token) { throw "login failed" }
 
-Write-Host "=== 提交研究任务 ==="
+Write-Host "=== 同步提交研究任务 (/sync) ==="
 $headers = @{ Authorization = "Bearer $token"; "Content-Type" = "application/json; charset=utf-8" }
 $body = @{ query = $query } | ConvertTo-Json
-$resp = Invoke-RestMethod -Uri "$JavaBase/api/v1/workspaces/$workspaceId/research/tasks" -Method Post -Headers $headers -Body $body
+$resp = Invoke-RestMethod -Uri "$JavaBase/api/v1/workspaces/$workspaceId/research/tasks/sync" -Method Post -Headers $headers -Body $body
 
 Write-Host "taskId=$($resp.taskId) status=$($resp.status)"
 if ($resp.status -ne "COMPLETED") {

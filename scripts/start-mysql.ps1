@@ -26,7 +26,8 @@ Write-Host "正在启动 MySQL..."
 Start-Process -FilePath $Bin -ArgumentList "--defaults-file=`"$Ini`"" -WindowStyle Hidden | Out-Null
 
 for ($i = 0; $i -lt 30; $i++) {
-    & $MysqlAdmin --defaults-file="$Ini" -uroot -p123456 --protocol=tcp -P 3306 ping 2>$null | Out-Null
+    # mysqladmin 密码提示走 stderr，避免被 $ErrorActionPreference=Stop 当成失败
+    cmd /c "`"$MysqlAdmin`" --defaults-file=`"$Ini`" -uroot -p123456 --protocol=tcp -P 3306 ping 1>nul 2>nul"
     if ($LASTEXITCODE -eq 0) {
         Write-Host "MySQL 已就绪 (127.0.0.1:3306)"
         exit 0

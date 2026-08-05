@@ -1,7 +1,7 @@
 # InsightHub 服务通信协议
 
 > Java 平台服务 ↔ Python Agent 服务  
-> 第 1 周：同步 JSON（非 SSE）。第 2 周：JWT + 工作空间隔离。流式推送见第 3 周。
+> 第 1 周：同步 JSON。第 2 周：JWT + 工作空间隔离。第 3 周：NDJSON 流 + SSE 断线续传 + 暂停/取消/重试。
 
 ---
 
@@ -104,9 +104,37 @@ X-Idempotency-Key: <taskId>-attempt-<n>
 
 ---
 
-## 4. Java 对外 API（第 2 周）
+## 4. 内部流式（第 3 周，Python → Java）
 
-### 4.1 鉴权
+```http
+POST /internal/v1/agent/tasks/stream
+Content-Type: application/json
+Accept: application/x-ndjson
+```
+
+响应为 **NDJSON**：一行一个事件 JSON；最后一行为：
+
+```json
+{ "type": "TASK_RESULT", "taskId": "...", "runId": "...", "status": "COMPLETED|FAILED|PAUSED|CANCELLED", "reportMarkdown": "...", "error": null }
+```
+
+`config.nextEventId`（可选）：Java retry 时传入 `MAX(event_no)+1`，保证同 `taskId` 事件号继续递增。
+
+恢复：
+
+```http
+POST /internal/v1/agent/tasks/{taskId}/resume
+```
+
+控制字 Redis：`ih:task:{taskId}:control` = `RUNNING|PAUSED|CANCELLED`。
+
+**Checkpoint 约束（第 3 周）**：Python 使用进程内 `MemorySaver`；**单进程**有效。进程重启或多 uvicorn worker 后 `/resume` 可能 `NO_CHECKPOINT`，此时以 MySQL 事件回放为准，需全量 `/stream` 重跑（retry）。
+
+---
+
+## 5. Java 对外 API
+
+### 5.1 鉴权
 
 | 接口 | 说明 |
 | --- | --- |
@@ -115,50 +143,46 @@ X-Idempotency-Key: <taskId>-attempt-<n>
 | `POST /api/v1/auth/refresh` | 刷新令牌 |
 | `GET /api/v1/auth/me` | 当前用户（需 Bearer） |
 
-业务接口请求头：
-
 ```http
 Authorization: Bearer <accessToken>
 ```
 
-工作空间通过 URL 路径 `{workspaceId}` 指定；服务端校验当前用户为该空间成员，非成员返回 **403**。
+SSE **仅** `.../research/tasks/{taskId}/events` 可用查询参数：`?access_token=<accessToken>`（EventSource 不便带 Header；其它 API 必须用 Bearer）。
 
-### 4.2 工作空间与 Agent
+### 5.2 研究任务（第 3 周）
 
-| 接口 | 权限 |
-| --- | --- |
-| `POST/GET /api/v1/workspaces` | 登录用户 |
-| `GET /api/v1/workspaces/{id}` | 成员 |
-| `GET/POST /api/v1/workspaces/{id}/members` | 读：成员；写：OWNER/ADMIN |
-| `DELETE /api/v1/workspaces/{id}/members/{userId}` | OWNER/ADMIN |
-| `GET/POST /api/v1/workspaces/{workspaceId}/agents` | 读：成员；写：ADMIN+ |
-| `PUT .../agents/{agentId}`、`.../enable`、`.../disable` | ADMIN+ |
+Base：`/api/v1/workspaces/{workspaceId}/research/tasks`
 
-### 4.3 研究任务（强制工作空间隔离）
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| POST | `/` | **异步 202** `{taskId,status,traceId}` |
+| POST | `/sync` | 同步 200（兼容 week1/2） |
+| GET | `/{taskId}/events` | SSE；`Last-Event-ID` 或 `?fromEventNo=` 续传 |
+| POST | `/{taskId}/pause` | RUNNING→PAUSED |
+| POST | `/{taskId}/resume` | PAUSED→RUNNING |
+| POST | `/{taskId}/cancel` | 取消（含 GENERATING） |
+| POST | `/{taskId}/retry` | FAILED→RUNNING（202） |
 
-```http
-POST /api/v1/workspaces/{workspaceId}/research/tasks
-Authorization: Bearer <token>
-Content-Type: application/json
-```
-
-```json
-{ "query": "比较 Spring AI 和 LangChain4j 的多 Agent 能力" }
-```
+SSE 示例：
 
 ```http
-GET /api/v1/workspaces/{workspaceId}/research/tasks
-GET /api/v1/workspaces/{workspaceId}/research/tasks/{taskId}
+GET /api/v1/workspaces/{workspaceId}/research/tasks/{taskId}/events?access_token=...
+Last-Event-ID: 3
+Accept: text/event-stream
 ```
 
-响应与 Agent 成功响应字段对齐，并额外可含 Java 侧 `traceId`。  
-任务状态机（同步路径）：`CREATED → PLANNING → RUNNING → GENERATING → COMPLETED`（失败 → `FAILED`）。
+事件投递 **at-least-once**；客户端按 `eventId` 去重。
 
-API 文档：`http://localhost:8080/doc.html`（Knife4j，Authorize 填 Bearer Token）。
+### 5.3 工作空间与 Agent
+
+同第 2 周：`/api/v1/workspaces/**`、`/agents/**`，非成员 **403**。
+
+API 文档：`http://localhost:8080/doc.html`。
 
 ---
 
-## 5. 健康检查
+## 6. 健康检查
 
 - Python：`GET /health` → `{ "status": "ok" }`
 - Java：`GET /api/v1/health`（无需登录）
+

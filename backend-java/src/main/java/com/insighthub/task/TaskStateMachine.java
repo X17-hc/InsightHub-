@@ -30,7 +30,8 @@ public class TaskStateMachine {
                 TaskStatus.CANCELLED));
         transitions.put(TaskStatus.PAUSED, EnumSet.of(TaskStatus.RUNNING, TaskStatus.CANCELLED));
         transitions.put(TaskStatus.REVIEWING, EnumSet.of(TaskStatus.RUNNING, TaskStatus.GENERATING));
-        transitions.put(TaskStatus.GENERATING, EnumSet.of(TaskStatus.COMPLETED, TaskStatus.FAILED));
+        transitions.put(TaskStatus.GENERATING, EnumSet.of(
+                TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED));
         transitions.put(TaskStatus.FAILED, EnumSet.of(TaskStatus.RUNNING));
         transitions.put(TaskStatus.COMPLETED, EnumSet.noneOf(TaskStatus.class));
         transitions.put(TaskStatus.CANCELLED, EnumSet.noneOf(TaskStatus.class));

@@ -120,6 +120,17 @@ public class WorkspaceRepository {
         return c == null ? 0 : c;
     }
 
+    /**
+     * 工作空间最大并发任务数，至少为 1。
+     */
+    public int getMaxConcurrentTasks(String workspaceId) {
+        Integer v = jdbcTemplate.queryForObject(
+                "SELECT max_concurrent_tasks FROM workspace WHERE id = ?",
+                Integer.class,
+                workspaceId);
+        return v == null || v < 1 ? 1 : v;
+    }
+
     public record WorkspaceRow(String id, String name, String description, String ownerId, int status) {
     }
 

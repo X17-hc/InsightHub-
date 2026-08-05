@@ -1,10 +1,12 @@
 package com.insighthub.common;
 
+import lombok.Getter;
 import org.springframework.http.HttpStatus;
 
 /**
  * 业务异常：携带错误码与 HTTP 状态。
  */
+@Getter
 public class BusinessException extends RuntimeException {
 
     private final String code;
@@ -14,14 +16,6 @@ public class BusinessException extends RuntimeException {
         super(message);
         this.code = code;
         this.status = status;
-    }
-
-    public String getCode() {
-        return code;
-    }
-
-    public HttpStatus getStatus() {
-        return status;
     }
 
     public static BusinessException badRequest(String code, String message) {
@@ -42,5 +36,9 @@ public class BusinessException extends RuntimeException {
 
     public static BusinessException conflict(String code, String message) {
         return new BusinessException(code, message, HttpStatus.CONFLICT);
+    }
+
+    public static BusinessException tooManyRequests(String code, String message) {
+        return new BusinessException(code, message, HttpStatus.TOO_MANY_REQUESTS);
     }
 }

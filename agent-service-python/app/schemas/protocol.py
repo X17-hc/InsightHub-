@@ -15,6 +15,19 @@ class TaskConfig(BaseModel):
     max_parallelism: int = Field(default=3, alias="maxParallelism")
     require_plan_approval: bool = Field(default=False, alias="requirePlanApproval")
     enable_web_search: bool = Field(default=True, alias="enableWebSearch")
+    # 流式执行超时（秒），超时 yield TASK_FAILED(TIMEOUT)
+    timeout_seconds: int = Field(default=300, alias="timeoutSeconds")
+    # 下一个可用 eventId（Java 传 DB max+1）；用于 retry 续号
+    next_event_id: int | None = Field(default=None, alias="nextEventId")
+
+    model_config = {"populate_by_name": True}
+
+
+class ResumeTaskRequest(BaseModel):
+    """从 Checkpoint 恢复流式执行。"""
+
+    run_id: str | None = Field(default=None, alias="runId")
+    trace_id: str | None = Field(default=None, alias="traceId")
 
     model_config = {"populate_by_name": True}
 

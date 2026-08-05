@@ -35,25 +35,45 @@ public class JwtAuthFilter extends OncePerRequestFilter {
             HttpServletRequest request,
             HttpServletResponse response,
             FilterChain filterChain) throws ServletException, IOException {
-        String header = request.getHeader(HttpHeaders.AUTHORIZATION);
-        if (header != null && header.startsWith("Bearer ")
-                && SecurityContextHolder.getContext().getAuthentication() == null) {
-            String token = header.substring(7).trim();
-            try {
-                Claims claims = jwtService.parseClaims(token);
-                String userId = claims.getSubject();
-                UserPrincipal principal = loadUser(userId);
-                if (principal != null && principal.isEnabled()) {
-                    UsernamePasswordAuthenticationToken auth =
-                            new UsernamePasswordAuthenticationToken(principal, null, principal.getAuthorities());
-                    auth.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
-                    SecurityContextHolder.getContext().setAuthentication(auth);
+        if (SecurityContextHolder.getContext().getAuthentication() == null) {
+            String token = null;
+            String header = request.getHeader(HttpHeaders.AUTHORIZATION);
+            if (header != null && header.startsWith("Bearer ")) {
+                token = header.substring(7).trim();
+            } else if (isSseEventsPath(request)) {
+                // 仅 SSE /events 允许 ?access_token=（EventSource 不便带 Header）
+                String q = request.getParameter("access_token");
+                if (q != null && !q.isBlank()) {
+                    token = q.trim();
                 }
-            } catch (Exception ignored) {
-                // 无效 token：保持未认证，由后续链路返回 401
+            }
+            if (token != null && !token.isEmpty()) {
+                try {
+                    Claims claims = jwtService.parseClaims(token);
+                    String userId = claims.getSubject();
+                    UserPrincipal principal = loadUser(userId);
+                    if (principal != null && principal.isEnabled()) {
+                        UsernamePasswordAuthenticationToken auth =
+                                new UsernamePasswordAuthenticationToken(
+                                        principal, null, principal.getAuthorities());
+                        auth.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
+                        SecurityContextHolder.getContext().setAuthentication(auth);
+                    }
+                } catch (Exception ignored) {
+                    // 无效 token：保持未认证，由后续链路返回 401
+                }
             }
         }
         filterChain.doFilter(request, response);
+    }
+
+    /** 仅研究任务事件 SSE 路径可使用 query token。 */
+    private static boolean isSseEventsPath(HttpServletRequest request) {
+        String uri = request.getRequestURI();
+        if (uri == null) {
+            return false;
+        }
+        return uri.contains("/research/tasks/") && uri.endsWith("/events");
     }
 
     private UserPrincipal loadUser(String userId) {

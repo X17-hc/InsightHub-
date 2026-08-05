@@ -3,3 +3,7 @@ name = "insighthub"
 version = "0.1.0"
 requires-python = ">=3.11"
 dependencies = []
+
+# 声明 uv workspace：根目录可用 --package 指向子项目
+[tool.uv.workspace]
+members = ["agent-service-python"]

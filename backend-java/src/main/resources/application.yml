@@ -6,15 +6,28 @@ spring:
     name: insighthub-backend
   datasource:
     url: ${MYSQL_JDBC_URL:jdbc:mysql://127.0.0.1:3306/insighthub?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai}
-    username: ${MYSQL_USER:insighthub}
+    username: ${MYSQL_USER:root}
     password: ${MYSQL_PASSWORD:123456}
     driver-class-name: com.mysql.cj.jdbc.Driver
+  data:
+    redis:
+      host: ${REDIS_HOST:127.0.0.1}
+      port: ${REDIS_PORT:6379}
+      database: ${REDIS_DB:0}
+  autoconfigure:
+    exclude:
+      # 使用自定义 RedissonConfig，避免 starter 对空密码误发 AUTH
+      - org.redisson.spring.starter.RedissonAutoConfigurationV2
 
 insighthub:
   agent:
     base-url: ${AGENT_BASE_URL:http://127.0.0.1:8000}
     connect-timeout-ms: 5000
     read-timeout-ms: 300000
+  task:
+    default-timeout-seconds: ${TASK_TIMEOUT_SECONDS:300}
+    create-rate-per-minute: ${TASK_CREATE_RATE_PER_MINUTE:10}
+    sse-heartbeat-seconds: 15
   jwt:
     # 至少 32 字节；生产务必通过 JWT_SECRET 覆盖
     secret: ${JWT_SECRET:dev-only-change-me-please-use-long-secret}

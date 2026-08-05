@@ -1,8 +1,15 @@
 package com.insighthub.auth.dto;
 
+import lombok.AllArgsConstructor;
+import lombok.Data;
+import lombok.NoArgsConstructor;
+
 /**
  * 登录/刷新返回的双令牌。
  */
+@Data
+@AllArgsConstructor
+@NoArgsConstructor
 public class TokenResponse {
 
     private String accessToken;
@@ -11,8 +18,6 @@ public class TokenResponse {
     private String userId;
     private String username;
 
-    public TokenResponse() {
-    }
 
     public TokenResponse(String accessToken, String refreshToken, String userId, String username) {
         this.accessToken = accessToken;
@@ -21,43 +26,4 @@ public class TokenResponse {
         this.username = username;
     }
 
-    public String getAccessToken() {
-        return accessToken;
-    }
-
-    public void setAccessToken(String accessToken) {
-        this.accessToken = accessToken;
-    }
-
-    public String getRefreshToken() {
-        return refreshToken;
-    }
-
-    public void setRefreshToken(String refreshToken) {
-        this.refreshToken = refreshToken;
-    }
-
-    public String getTokenType() {
-        return tokenType;
-    }
-
-    public void setTokenType(String tokenType) {
-        this.tokenType = tokenType;
-    }
-
-    public String getUserId() {
-        return userId;
-    }
-
-    public void setUserId(String userId) {
-        this.userId = userId;
-    }
-
-    public String getUsername() {
-        return username;
-    }
-
-    public void setUsername(String username) {
-        this.username = username;
-    }
 }

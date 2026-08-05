@@ -151,29 +151,84 @@ public class TaskRepository {
         }
         for (int i = 0; i < events.size(); i++) {
             AgentEventDto event = events.get(i);
-            String payload;
-            try {
-                Map<String, Object> data = event.getData() == null ? Map.of() : event.getData();
-                payload = objectMapper.writeValueAsString(data);
-            } catch (JsonProcessingException e) {
-                payload = "{}";
-            }
-            // eventId 为空时用序号兜底，避免 NOT NULL 约束失败
             long eventNo = event.getEventId() != null ? event.getEventId() : (i + 1L);
-            jdbcTemplate.update(
-                    """
-                    INSERT INTO task_event
-                      (task_id, event_no, run_id, node_name, event_type, payload_json, created_at)
-                    VALUES (?, ?, ?, ?, ?, CAST(? AS JSON), ?)
-                    """,
-                    taskId,
-                    eventNo,
-                    event.getRunId(),
-                    event.getNode(),
-                    event.getType(),
-                    payload,
-                    parseTs(event.getTimestamp()));
+            insertEventIgnoreDuplicate(taskId, eventNo, event);
         }
+    }
+
+    /**
+     * 插入单条事件；uk 冲突时忽略（at-least-once 去重）。
+     *
+     * @return true 表示新插入
+     */
+    public boolean insertEventIgnoreDuplicate(String taskId, long eventNo, AgentEventDto event) {
+        String payload;
+        try {
+            Map<String, Object> data = event.getData() == null ? Map.of() : event.getData();
+            payload = objectMapper.writeValueAsString(data);
+        } catch (JsonProcessingException e) {
+            payload = "{}";
+        }
+        int n = jdbcTemplate.update(
+                """
+                INSERT IGNORE INTO task_event
+                  (task_id, event_no, run_id, node_name, event_type, payload_json, created_at)
+                VALUES (?, ?, ?, ?, ?, CAST(? AS JSON), ?)
+                """,
+                taskId,
+                eventNo,
+                event.getRunId(),
+                event.getNode(),
+                event.getType(),
+                payload,
+                parseTs(event.getTimestamp()));
+        return n > 0;
+    }
+
+    /** 当前任务已分配的最大 event_no；无事件时返回 0。 */
+    public long maxEventNo(String taskId) {
+        Long v = jdbcTemplate.query(
+                "SELECT COALESCE(MAX(event_no), 0) AS m FROM task_event WHERE task_id = ?",
+                rs -> rs.next() ? rs.getLong("m") : 0L,
+                taskId);
+        return v == null ? 0L : v;
+    }
+
+    /**
+     * SSE 续传：查询 event_no 大于 fromEventNo 的事件。
+     */
+    public List<EventRow> listEventsAfter(String taskId, long fromEventNo) {
+        return jdbcTemplate.query(
+                """
+                SELECT event_no, run_id, node_name, event_type, payload_json, created_at
+                FROM task_event
+                WHERE task_id = ? AND event_no > ?
+                ORDER BY event_no ASC
+                """,
+                (rs, i) -> new EventRow(
+                        rs.getLong("event_no"),
+                        rs.getString("run_id"),
+                        rs.getString("node_name"),
+                        rs.getString("event_type"),
+                        rs.getString("payload_json"),
+                        rs.getTimestamp("created_at")),
+                taskId,
+                fromEventNo);
+    }
+
+    /** 重试前清除错误并写入新 runId。 */
+    public void prepareRetry(String taskId, String workspaceId, String runId) {
+        jdbcTemplate.update(
+                """
+                UPDATE research_task
+                SET current_run_id = ?,
+                    error_code = NULL,
+                    error_message = NULL,
+                    completed_at = NULL,
+                    updated_at = NOW()
+                WHERE id = ? AND workspace_id = ?
+                """,
+                runId, taskId, workspaceId);
     }
 
     public void insertReport(String reportId, String taskId, String workspaceId, String markdown, String title) {
@@ -208,6 +263,15 @@ public class TaskRepository {
             String currentRunId,
             String errorCode,
             String errorMessage,
+            Timestamp createdAt) {
+    }
+
+    public record EventRow(
+            long eventNo,
+            String runId,
+            String nodeName,
+            String eventType,
+            String payloadJson,
             Timestamp createdAt) {
     }
 }

@@ -1,10 +1,12 @@
 package com.insighthub.workspace.dto;
 
 import jakarta.validation.constraints.NotBlank;
+import lombok.Data;
 
 /**
  * 添加成员请求。
  */
+@Data
 public class AddMemberRequest {
 
     @NotBlank
@@ -13,19 +15,5 @@ public class AddMemberRequest {
     /** OWNER / ADMIN / MEMBER，默认 MEMBER */
     private String role = "MEMBER";
 
-    public String getUserId() {
-        return userId;
-    }
 
-    public void setUserId(String userId) {
-        this.userId = userId;
-    }
-
-    public String getRole() {
-        return role;
-    }
-
-    public void setRole(String role) {
-        this.role = role;
-    }
 }

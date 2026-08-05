@@ -20,7 +20,8 @@ import reactor.netty.http.client.HttpClient;
         AgentProperties.class,
         DemoProperties.class,
         JwtProperties.class,
-        DocsProperties.class
+        DocsProperties.class,
+        TaskProperties.class
 })
 public class AppConfig {
 

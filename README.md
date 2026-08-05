@@ -7,7 +7,8 @@
 
 
 - Planner → Supervisor → Researcher 产出 Markdown 报告
-- JWT 鉴权、工作空间 RBAC、Agent 配置、任务状态机、Knife4j；**跨工作空间数据隔离**
+- JWT / 工作空间 RBAC / Agent / 状态机 / Knife4j
+- 第 3 周：NDJSON 流式、SSE 断线续传、暂停/恢复/取消/重试、Redis 并发与限流
 
 ## 快速启动
 
@@ -45,9 +46,12 @@ mvn -DskipTests spring-boot:run
 
 ```powershell
 cd C:\Users\Dell\PycharmProjects\PythonTestProject\InsightHub
-.\scripts\run-week1-demo.ps1          # 登录后创建研究任务
+.\scripts\run-week1-demo.ps1          # 同步 /sync 任务
 .\scripts\run-week2-isolation-demo.ps1 # 跨空间 403 隔离
+.\scripts\run-week3-sse-demo.ps1       # SSE 续传 + pause/resume
 ```
+
+需 Redis（`127.0.0.1:6379`）与 MySQL 同时可用。
 
 ## 文档
 

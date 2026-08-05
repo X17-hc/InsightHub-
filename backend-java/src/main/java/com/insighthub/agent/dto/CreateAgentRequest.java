@@ -1,10 +1,12 @@
 package com.insighthub.agent.dto;
 
 import jakarta.validation.constraints.NotBlank;
+import lombok.Data;
 
 /**
  * 创建 Agent 请求。
  */
+@Data
 public class CreateAgentRequest {
 
     @NotBlank
@@ -21,51 +23,4 @@ public class CreateAgentRequest {
 
     private boolean enabled = true;
 
-    public String getName() {
-        return name;
-    }
-
-    public void setName(String name) {
-        this.name = name;
-    }
-
-    public String getAgentType() {
-        return agentType;
-    }
-
-    public void setAgentType(String agentType) {
-        this.agentType = agentType;
-    }
-
-    public String getRuntime() {
-        return runtime;
-    }
-
-    public void setRuntime(String runtime) {
-        this.runtime = runtime;
-    }
-
-    public String getPromptVersion() {
-        return promptVersion;
-    }
-
-    public void setPromptVersion(String promptVersion) {
-        this.promptVersion = promptVersion;
-    }
-
-    public String getSystemPrompt() {
-        return systemPrompt;
-    }
-
-    public void setSystemPrompt(String systemPrompt) {
-        this.systemPrompt = systemPrompt;
-    }
-
-    public boolean isEnabled() {
-        return enabled;
-    }
-
-    public void setEnabled(boolean enabled) {
-        this.enabled = enabled;
-    }
 }

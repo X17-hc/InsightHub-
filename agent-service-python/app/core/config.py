@@ -25,6 +25,11 @@ class Settings(BaseSettings):
     default_max_steps: int = 20
     # 为 true 时跳过真实 LLM，使用确定性假数据（单测 / 无 Key 冒烟）
     agent_mock_llm: bool = False
+    # MOCK 模式下节点边界停顿（毫秒），便于 pause/cancel 联调；单测设 0
+    agent_mock_step_delay_ms: int = 800
+    # Redis：任务控制字；不可用时降级进程内内存
+    redis_url: str = "redis://127.0.0.1:6379/0"
+    default_timeout_seconds: int = 300
 
 
 @lru_cache

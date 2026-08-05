@@ -76,8 +76,8 @@ $wsA = "workspace-demo"
 $wsB = "workspace-demo-b"
 if (-not $tokenA -or -not $tokenB) { throw "login token missing" }
 
-Write-Host "=== A 创建任务于 workspace-A ==="
-$taskA = Invoke-Json -Method POST -Url "$Base/api/v1/workspaces/$wsA/research/tasks" `
+Write-Host "=== A 创建任务于 workspace-A（/sync） ==="
+$taskA = Invoke-Json -Method POST -Url "$Base/api/v1/workspaces/$wsA/research/tasks/sync" `
     -Token $tokenA -Body @{ query = "Week2 isolation demo for workspace A" }
 if ($taskA.Body.status -ne "COMPLETED") { throw "task A not completed: $($taskA.Body | ConvertTo-Json -Depth 5)" }
 $taskIdA = $taskA.Body.taskId
@@ -87,8 +87,8 @@ Write-Host "=== B 访问 workspace-A 应 403 ==="
 Invoke-Json -Method GET -Url "$Base/api/v1/workspaces/$wsA/research/tasks" -Token $tokenB -ExpectStatus @(403) | Out-Null
 Invoke-Json -Method GET -Url "$Base/api/v1/workspaces/$wsA/research/tasks/$taskIdA" -Token $tokenB -ExpectStatus @(403) | Out-Null
 
-Write-Host "=== B 在 workspace-B 创建任务 ==="
-$taskB = Invoke-Json -Method POST -Url "$Base/api/v1/workspaces/$wsB/research/tasks" `
+Write-Host "=== B 在 workspace-B 创建任务（/sync） ==="
+$taskB = Invoke-Json -Method POST -Url "$Base/api/v1/workspaces/$wsB/research/tasks/sync" `
     -Token $tokenB -Body @{ query = "Week2 isolation demo for workspace B" }
 $taskIdB = $taskB.Body.taskId
 Write-Host "taskB=$taskIdB"
