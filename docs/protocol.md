@@ -134,12 +134,29 @@ POST /internal/v1/agent/tasks/{taskId}/resume
 
 ## 5. Java 对外 API
 
+### 5.0 统一响应信封（BaseResponse）
+
+除 **SSE**（`.../events`）外，平台 API 均返回：
+
+```json
+{ "code": 0, "data": { }, "message": "ok" }
+```
+
+| 字段 | 说明 |
+| --- | --- |
+| `code` | `0` 成功；失败为业务码（如 `40100` 未登录、`40300` 禁止访问、`40400` 不存在、`42900` 限流） |
+| `data` | 业务载荷；失败多为 `null` |
+| `message` | 说明；失败时可含原业务细码前缀 |
+
+失败时 **HTTP 通常仍为 200**（与全局异常处理一致）；客户端应优先判断 `code`，不要只看 HTTP 状态。  
+异步创建/重试仍可返回 **HTTP 202**，响应体仍是上述信封（`data` 内为 `taskId` 等）。
+
 ### 5.1 鉴权
 
 | 接口 | 说明 |
 | --- | --- |
 | `POST /api/v1/auth/register` | 注册 |
-| `POST /api/v1/auth/login` | 返回 `accessToken` + `refreshToken` |
+| `POST /api/v1/auth/login` | `data` 含 `accessToken` + `refreshToken` |
 | `POST /api/v1/auth/refresh` | 刷新令牌 |
 | `GET /api/v1/auth/me` | 当前用户（需 Bearer） |
 
@@ -155,9 +172,9 @@ Base：`/api/v1/workspaces/{workspaceId}/research/tasks`
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
-| POST | `/` | **异步 202** `{taskId,status,traceId}` |
-| POST | `/sync` | 同步 200（兼容 week1/2） |
-| GET | `/{taskId}/events` | SSE；`Last-Event-ID` 或 `?fromEventNo=` 续传 |
+| POST | `/` | **异步 202**，`data`=`{taskId,status,traceId}` |
+| POST | `/sync` | 同步（兼容 week1/2），结果在 `data` |
+| GET | `/{taskId}/events` | SSE（**不套信封**）；`Last-Event-ID` 或 `?fromEventNo=` 续传 |
 | POST | `/{taskId}/pause` | RUNNING→PAUSED |
 | POST | `/{taskId}/resume` | PAUSED→RUNNING |
 | POST | `/{taskId}/cancel` | 取消（含 GENERATING） |
@@ -175,7 +192,7 @@ Accept: text/event-stream
 
 ### 5.3 工作空间与 Agent
 
-同第 2 周：`/api/v1/workspaces/**`、`/agents/**`，非成员 **403**。
+同第 2 周：`/api/v1/workspaces/**`、`/agents/**`；非成员返回信封 `code=40300`（HTTP 多为 200）。
 
 API 文档：`http://localhost:8080/doc.html`。
 
@@ -183,6 +200,6 @@ API 文档：`http://localhost:8080/doc.html`。
 
 ## 6. 健康检查
 
-- Python：`GET /health` → `{ "status": "ok" }`
-- Java：`GET /api/v1/health`（无需登录）
+- Python：`GET /health` → `{ "status": "ok" }`（Agent 侧，无信封）
+- Java：`GET /api/v1/health` → `{ "code": 0, "data": { "status": "ok" }, "message": "ok" }`（无需登录）
 

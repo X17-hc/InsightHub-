@@ -1,4 +1,4 @@
-﻿# InsightHub 本地环境配置说明
+# InsightHub 本地环境配置说明
 
 > 更新日期：2026-08-03  
 > 适用机器：当前 Windows 开发机（`C:\Users\Dell\PycharmProjects\PythonTestProject\InsightHub`）  

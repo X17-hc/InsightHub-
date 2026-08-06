@@ -54,6 +54,11 @@ knife4j:
   setting:
     language: zh_cn
 
+mybatis-flex:
+  configuration:
+    # 注解 SQL 与 BaseMapper 均将 snake_case 列映射到驼峰字段
+    map-underscore-to-camel-case: true
+
 logging:
   level:
-    com.insighthub: INFO
+    com.hechang.insighthub: INFO

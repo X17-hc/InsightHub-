@@ -47,7 +47,7 @@ mvn -DskipTests spring-boot:run
 ```powershell
 cd C:\Users\Dell\PycharmProjects\PythonTestProject\InsightHub
 .\scripts\run-week1-demo.ps1          # 同步 /sync 任务
-.\scripts\run-week2-isolation-demo.ps1 # 跨空间 403 隔离
+.\scripts\run-week2-isolation-demo.ps1 # 跨空间隔离（业务码 40300）
 .\scripts\run-week3-sse-demo.ps1       # SSE 续传 + pause/resume
 ```
 

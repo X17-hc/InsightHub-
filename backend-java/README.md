@@ -1,6 +1,10 @@
 # InsightHub Java 平台服务
 
-Spring Boot 3.3 / JDK 21。第 2 周能力：JWT、工作空间 RBAC、Agent 配置、任务状态机、Knife4j。
+Spring Boot 3.3 / JDK 21 / MyBatis-Flex。根包：`com.hechang.insighthub`。
+
+横向分层：`controller` → `service`/`service.impl` → `mapper` → `model.entity`；DTO 在 `model.dto.*`。
+
+统一响应：`{ code, data, message }`（`BaseResponse`）；SSE 不套信封。失败多为 HTTP 200 + 业务 `code`。
 
 ## IntelliJ：`java.util` 报红
 
@@ -22,7 +26,7 @@ cd C:\Users\Dell\PycharmProjects\PythonTestProject\InsightHub\backend-java
 mvn -DskipTests spring-boot:run
 ```
 
-- 健康检查：http://127.0.0.1:8080/api/v1/health
+- 健康检查：http://127.0.0.1:8080/api/v1/health → `data.status=ok`
 - Knife4j：http://127.0.0.1:8080/doc.html
 
 ## 演示数据（启动自动 seed）

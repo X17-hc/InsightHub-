@@ -1,4 +1,4 @@
-# InsightHub 第 1 周端到端演示（第 3 周起同步路径为 /sync）
+# InsightHub 第 1 周端到端演示（BaseResponse 信封：业务数据在 .data）
 
 $ErrorActionPreference = "Stop"
 $JavaBase = "http://127.0.0.1:8080"
@@ -7,18 +7,23 @@ $workspaceId = "workspace-demo"
 
 Write-Host "=== 检查 Java 健康 ==="
 $health = Invoke-RestMethod -Uri "$JavaBase/api/v1/health" -Method Get
-if ($health.status -ne "ok") { throw "Java health 异常: $($health | ConvertTo-Json)" }
+if ($health.code -ne 0 -or $health.data.status -ne "ok") {
+    throw "Java health 异常: $($health | ConvertTo-Json)"
+}
 
 Write-Host "=== 登录 demo ==="
 $loginBody = @{ username = "demo"; password = "demo123456" } | ConvertTo-Json
 $login = Invoke-RestMethod -Uri "$JavaBase/api/v1/auth/login" -Method Post -Body $loginBody -ContentType "application/json; charset=utf-8"
-$token = $login.accessToken
-if (-not $token) { throw "login failed" }
+if ($login.code -ne 0) { throw "login failed: $($login | ConvertTo-Json)" }
+$token = $login.data.accessToken
+if (-not $token) { throw "login failed: missing accessToken" }
 
 Write-Host "=== 同步提交研究任务 (/sync) ==="
 $headers = @{ Authorization = "Bearer $token"; "Content-Type" = "application/json; charset=utf-8" }
 $body = @{ query = $query } | ConvertTo-Json
-$resp = Invoke-RestMethod -Uri "$JavaBase/api/v1/workspaces/$workspaceId/research/tasks/sync" -Method Post -Headers $headers -Body $body
+$wrap = Invoke-RestMethod -Uri "$JavaBase/api/v1/workspaces/$workspaceId/research/tasks/sync" -Method Post -Headers $headers -Body $body
+if ($wrap.code -ne 0) { throw "sync task failed: $($wrap | ConvertTo-Json -Depth 6)" }
+$resp = $wrap.data
 
 Write-Host "taskId=$($resp.taskId) status=$($resp.status)"
 if ($resp.status -ne "COMPLETED") {

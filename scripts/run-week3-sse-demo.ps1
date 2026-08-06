@@ -1,4 +1,4 @@
-# InsightHub 第 3 周：异步任务 + SSE 断线续传 + pause/resume（不提交 Git）
+# InsightHub 第 3 周：异步任务 + SSE 断线续传 + pause/resume（BaseResponse 信封；SSE 不套信封）
 $ErrorActionPreference = "Stop"
 $Base = "http://127.0.0.1:8080"
 $Ws = "workspace-demo"
@@ -6,11 +6,21 @@ $Ws = "workspace-demo"
 # Windows PowerShell 5.1 需显式加载；PS7 忽略失败即可
 try { Add-Type -AssemblyName System.Net.Http -ErrorAction Stop } catch {}
 
+function Unwrap-Data($wrap) {
+    if ($null -eq $wrap) { throw "empty response" }
+    if ($null -ne $wrap.code -and [int]$wrap.code -ne 0) {
+        throw "biz error code=$($wrap.code) message=$($wrap.message)"
+    }
+    if ($null -ne $wrap.data) { return $wrap.data }
+    return $wrap
+}
+
 function Login-Demo {
     $body = @{ username = "demo"; password = "demo123456" } | ConvertTo-Json
     $login = Invoke-RestMethod -Uri "$Base/api/v1/auth/login" -Method Post -Body $body -ContentType "application/json; charset=utf-8"
-    if (-not $login.accessToken) { throw "login failed" }
-    return $login.accessToken
+    $data = Unwrap-Data $login
+    if (-not $data.accessToken) { throw "login failed" }
+    return $data.accessToken
 }
 
 function Create-AsyncTask([string]$Token, [string]$Query) {
@@ -27,7 +37,7 @@ function Read-SseEvents {
         [int]$MaxEvents = 50,
         [int]$TimeoutSec = 90
     )
-    # 使用 HttpWebRequest，避免依赖 System.Net.Http 程序集加载差异
+    # SSE 不套 BaseResponse；使用 HttpWebRequest 避免程序集差异
     $url = "$Base/api/v1/workspaces/$Ws/research/tasks/$TaskId/events?access_token=$([uri]::EscapeDataString($Token))&fromEventNo=$FromEventNo"
     $req = [System.Net.HttpWebRequest]::Create($url)
     $req.Method = "GET"
@@ -82,14 +92,14 @@ function Read-SseEvents {
 }
 
 Write-Host "=== health ==="
-$h = Invoke-RestMethod -Uri "$Base/api/v1/health"
+$h = Unwrap-Data (Invoke-RestMethod -Uri "$Base/api/v1/health")
 if ($h.status -ne "ok") { throw "health failed" }
 
 $token = Login-Demo
 Write-Host "=== async create ==="
 $createResp = Create-AsyncTask -Token $token -Query "Week3 SSE isolation and resume demo"
 if ($createResp.StatusCode -ne 202) { throw "expected 202, got $($createResp.StatusCode)" }
-$created = $createResp.Content | ConvertFrom-Json
+$created = Unwrap-Data ($createResp.Content | ConvertFrom-Json)
 $taskId = $created.taskId
 Write-Host "taskId=$taskId"
 
@@ -126,7 +136,7 @@ if (-not $terminal) {
     for ($i = 0; $i -lt 40; $i++) {
         Start-Sleep -Seconds 2
         $headers = @{ Authorization = "Bearer $token" }
-        $detail = Invoke-RestMethod -Uri "$Base/api/v1/workspaces/$Ws/research/tasks/$taskId" -Headers $headers
+        $detail = Unwrap-Data (Invoke-RestMethod -Uri "$Base/api/v1/workspaces/$Ws/research/tasks/$taskId" -Headers $headers)
         Write-Host "poll status=$($detail.status)"
         if ($detail.status -eq "COMPLETED") { $terminal = $true; break }
         if ($detail.status -in @("FAILED", "CANCELLED")) { throw "task ended as $($detail.status)" }
@@ -139,11 +149,11 @@ $headers = @{ Authorization = "Bearer $token" }
 $pausedOk = $false
 for ($attempt = 1; $attempt -le 5; $attempt++) {
     $create2 = Create-AsyncTask -Token $token -Query "Week3 pause resume demo attempt $attempt"
-    $task2 = ($create2.Content | ConvertFrom-Json).taskId
+    $task2 = (Unwrap-Data ($create2.Content | ConvertFrom-Json)).taskId
     # MOCK 节点边界有 delay，尽早 pause
     Start-Sleep -Milliseconds 200
     try {
-        $pause = Invoke-RestMethod -Uri "$Base/api/v1/workspaces/$Ws/research/tasks/$task2/pause" -Method Post -Headers $headers
+        $pause = Unwrap-Data (Invoke-RestMethod -Uri "$Base/api/v1/workspaces/$Ws/research/tasks/$task2/pause" -Method Post -Headers $headers)
         Write-Host "pause status=$($pause.status) task2=$task2"
     } catch {
         Write-Host "pause attempt $attempt failed: $($_.Exception.Message)"
@@ -152,7 +162,7 @@ for ($attempt = 1; $attempt -le 5; $attempt++) {
     # 等 Python 节点边界落地 PAUSED
     for ($i = 0; $i -lt 20; $i++) {
         Start-Sleep -Milliseconds 300
-        $detail2 = Invoke-RestMethod -Uri "$Base/api/v1/workspaces/$Ws/research/tasks/$task2" -Headers $headers
+        $detail2 = Unwrap-Data (Invoke-RestMethod -Uri "$Base/api/v1/workspaces/$Ws/research/tasks/$task2" -Headers $headers)
         if ($detail2.status -eq "PAUSED") { $pausedOk = $true; break }
         if ($detail2.status -in @("COMPLETED", "FAILED", "CANCELLED")) { break }
     }
@@ -161,11 +171,11 @@ for ($attempt = 1; $attempt -le 5; $attempt++) {
 }
 if (-not $pausedOk) { throw "failed to pause a running task after retries" }
 
-$resume = Invoke-RestMethod -Uri "$Base/api/v1/workspaces/$Ws/research/tasks/$task2/resume" -Method Post -Headers $headers
+$resume = Unwrap-Data (Invoke-RestMethod -Uri "$Base/api/v1/workspaces/$Ws/research/tasks/$task2/resume" -Method Post -Headers $headers)
 Write-Host "resume status=$($resume.status)"
 for ($i = 0; $i -lt 60; $i++) {
     Start-Sleep -Seconds 2
-    $detail2 = Invoke-RestMethod -Uri "$Base/api/v1/workspaces/$Ws/research/tasks/$task2" -Headers $headers
+    $detail2 = Unwrap-Data (Invoke-RestMethod -Uri "$Base/api/v1/workspaces/$Ws/research/tasks/$task2" -Headers $headers)
     Write-Host "resume poll=$($detail2.status)"
     if ($detail2.status -eq "COMPLETED") { break }
     if ($detail2.status -in @("FAILED", "CANCELLED")) { throw "pause/resume task ended $($detail2.status)" }
@@ -176,10 +186,10 @@ Write-Host "=== cancel on third task ==="
 $cancelOk = $false
 for ($attempt = 1; $attempt -le 5; $attempt++) {
     $create3 = Create-AsyncTask -Token $token -Query "Week3 cancel demo attempt $attempt"
-    $task3 = ($create3.Content | ConvertFrom-Json).taskId
+    $task3 = (Unwrap-Data ($create3.Content | ConvertFrom-Json)).taskId
     Start-Sleep -Milliseconds 200
     try {
-        $cancel = Invoke-RestMethod -Uri "$Base/api/v1/workspaces/$Ws/research/tasks/$task3/cancel" -Method Post -Headers $headers
+        $cancel = Unwrap-Data (Invoke-RestMethod -Uri "$Base/api/v1/workspaces/$Ws/research/tasks/$task3/cancel" -Method Post -Headers $headers)
         Write-Host "cancel status=$($cancel.status) task3=$task3"
         $cancelOk = $true
         break
@@ -190,7 +200,7 @@ for ($attempt = 1; $attempt -le 5; $attempt++) {
 if (-not $cancelOk) { throw "failed to cancel a running task after retries" }
 for ($i = 0; $i -lt 20; $i++) {
     Start-Sleep -Milliseconds 300
-    $detail3 = Invoke-RestMethod -Uri "$Base/api/v1/workspaces/$Ws/research/tasks/$task3" -Headers $headers
+    $detail3 = Unwrap-Data (Invoke-RestMethod -Uri "$Base/api/v1/workspaces/$Ws/research/tasks/$task3" -Headers $headers)
     if ($detail3.status -eq "CANCELLED") { break }
 }
 if ($detail3.status -ne "CANCELLED") { throw "expected CANCELLED, got $($detail3.status)" }
