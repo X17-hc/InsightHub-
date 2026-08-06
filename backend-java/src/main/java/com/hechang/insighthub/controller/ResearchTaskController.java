@@ -18,6 +18,7 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import com.hechang.insighthub.common.BaseResponse;
 import com.hechang.insighthub.common.ResultUtils;
+import com.hechang.insighthub.model.dto.knowledge.CitationResponse;
 import com.hechang.insighthub.model.dto.task.AgentTaskResponseDto;
 import com.hechang.insighthub.model.dto.task.CreateResearchTaskRequest;
 import com.hechang.insighthub.model.dto.task.CreateTaskAcceptedResponse;
@@ -52,7 +53,7 @@ public class ResearchTaskController {
             @PathVariable String workspaceId,
             @Valid @RequestBody CreateResearchTaskRequest request) {
         return ResponseEntity.status(HttpStatus.ACCEPTED)
-                .body(ResultUtils.success(researchTaskService.createAsync(workspaceId, request.getQuery())));
+                .body(ResultUtils.success(researchTaskService.createAsync(workspaceId, request)));
     }
 
     @PostMapping("/sync")
@@ -60,7 +61,7 @@ public class ResearchTaskController {
     public BaseResponse<AgentTaskResponseDto> createSync(
             @PathVariable String workspaceId,
             @Valid @RequestBody CreateResearchTaskRequest request) {
-        return ResultUtils.success(researchTaskService.createAndRun(workspaceId, request.getQuery()));
+        return ResultUtils.success(researchTaskService.createAndRun(workspaceId, request));
     }
 
     @GetMapping
@@ -75,6 +76,14 @@ public class ResearchTaskController {
             @PathVariable String workspaceId,
             @PathVariable String taskId) {
         return ResultUtils.success(researchTaskService.get(workspaceId, taskId));
+    }
+
+    @GetMapping("/{taskId}/citations")
+    @Operation(summary = "任务引用列表（结论可追溯来源）")
+    public BaseResponse<List<CitationResponse>> citations(
+            @PathVariable String workspaceId,
+            @PathVariable String taskId) {
+        return ResultUtils.success(researchTaskService.listCitations(workspaceId, taskId));
     }
 
     @GetMapping(value = "/{taskId}/events", produces = MediaType.TEXT_EVENT_STREAM_VALUE)

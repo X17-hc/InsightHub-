@@ -3,7 +3,9 @@ package com.hechang.insighthub.service.impl;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -14,15 +16,18 @@ import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.hechang.insighthub.config.TaskProperties;
 import com.hechang.insighthub.integration.AgentStreamClient;
+import com.hechang.insighthub.mapper.CitationMapper;
 import com.hechang.insighthub.mapper.ReportMapper;
 import com.hechang.insighthub.mapper.ResearchTaskMapper;
 import com.hechang.insighthub.mapper.TaskEventMapper;
 import com.hechang.insighthub.model.dto.task.AgentEventDto;
+import com.hechang.insighthub.model.entity.Citation;
 import com.hechang.insighthub.model.entity.Report;
 import com.hechang.insighthub.model.entity.ResearchTask;
 import com.hechang.insighthub.model.enums.TaskStatus;
@@ -43,6 +48,7 @@ public class TaskExecutionServiceImpl implements TaskExecutionService {
     private final ResearchTaskMapper researchTaskMapper;
     private final TaskEventMapper taskEventMapper;
     private final ReportMapper reportMapper;
+    private final CitationMapper citationMapper;
     private final TaskStateMachine stateMachine;
     private final TaskControlRedis taskControlRedis;
     private final WorkspaceConcurrencyService concurrencyService;
@@ -57,6 +63,7 @@ public class TaskExecutionServiceImpl implements TaskExecutionService {
             ResearchTaskMapper researchTaskMapper,
             TaskEventMapper taskEventMapper,
             ReportMapper reportMapper,
+            CitationMapper citationMapper,
             TaskStateMachine stateMachine,
             TaskControlRedis taskControlRedis,
             WorkspaceConcurrencyService concurrencyService,
@@ -69,6 +76,7 @@ public class TaskExecutionServiceImpl implements TaskExecutionService {
         this.researchTaskMapper = researchTaskMapper;
         this.taskEventMapper = taskEventMapper;
         this.reportMapper = reportMapper;
+        this.citationMapper = citationMapper;
         this.stateMachine = stateMachine;
         this.taskControlRedis = taskControlRedis;
         this.concurrencyService = concurrencyService;
@@ -99,10 +107,13 @@ public class TaskExecutionServiceImpl implements TaskExecutionService {
             } else {
                 long nextEventId = taskEventMapper.maxEventNo(taskId) + 1;
                 String idem = taskId + "-stream-" + System.currentTimeMillis();
+                List<String> kbIds = parseKbIds(
+                        researchTaskMapper.findByIdAndWorkspace(taskId, workspaceId));
                 agentStreamClient.streamTask(
                         taskId, workspaceId, userId, query, traceId, timeout,
                         nextEventId <= 1 ? null : nextEventId,
                         idem,
+                        kbIds,
                         node -> handleLine(taskId, workspaceId, node, badLines, generation));
             }
             if (!streamLease.isCurrent(taskId, generation)) {
@@ -308,6 +319,7 @@ public class TaskExecutionServiceImpl implements TaskExecutionService {
                     try {
                         String reportId = "report-" + UUID.randomUUID().toString().replace("-", "").substring(0, 16);
                         insertReport(reportId, taskId, workspaceId, report, extractTitle(report));
+                        persistCitations(reportId, taskId, node.get("citations"));
                     } catch (Exception ex) {
                         log.error("report persist failed taskId={}", taskId, ex);
                         researchTaskMapper.updateTaskFinished(
@@ -483,5 +495,46 @@ public class TaskExecutionServiceImpl implements TaskExecutionService {
             }
         }
         return "InsightHub Report";
+    }
+
+    /** 从任务行解析 knowledge_base_ids JSON */
+    private List<String> parseKbIds(ResearchTask row) {
+        if (row == null || row.getKnowledgeBaseIds() == null || row.getKnowledgeBaseIds().isBlank()) {
+            return List.of();
+        }
+        try {
+            return objectMapper.readValue(row.getKnowledgeBaseIds(), new TypeReference<List<String>>() {});
+        } catch (Exception ex) {
+            log.warn("parse knowledgeBaseIds failed taskId={}", row.getId());
+            return List.of();
+        }
+    }
+
+    /** 落库 citations（先清后写，幂等） */
+    private void persistCitations(String reportId, String taskId, JsonNode citationsNode) {
+        citationMapper.deleteByTaskId(taskId);
+        if (citationsNode == null || !citationsNode.isArray()) {
+            return;
+        }
+        int i = 0;
+        for (JsonNode c : citationsNode) {
+            i++;
+            Citation citation = new Citation();
+            citation.setId("cit-" + UUID.randomUUID().toString().replace("-", "").substring(0, 16));
+            citation.setReportId(reportId);
+            citation.setTaskId(taskId);
+            int no = c.has("citationNo") && !c.get("citationNo").isNull()
+                    ? c.get("citationNo").asInt(i)
+                    : i;
+            citation.setCitationNo(no);
+            citation.setSourceTitle(text(c, "sourceTitle"));
+            citation.setSourceUri(text(c, "sourceUri"));
+            citation.setSourceType(text(c, "sourceType"));
+            citation.setDocumentId(text(c, "documentId"));
+            citation.setChunkId(text(c, "chunkId"));
+            citation.setQuotedText(text(c, "quotedText"));
+            citation.setVerified(c.has("verified") && c.get("verified").asBoolean(false) ? 1 : 0);
+            citationMapper.insert(citation);
+        }
     }
 }

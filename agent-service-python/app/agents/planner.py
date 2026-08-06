@@ -29,7 +29,9 @@ _PLANNER_SYSTEM = """你是 InsightHub 的 Planner Agent。
     }
   ]
 }
-要求：至少 1 个、最多 3 个 type=web_research 的任务。
+任务 type 仅允许：web_research、knowledge_research。
+若用户绑定了内部知识库，应包含至少 1 个 knowledge_research。
+要求：总共至少 1 个、最多 3 个任务。
 """
 
 
@@ -45,19 +47,30 @@ def _extract_json(text: str) -> dict[str, Any]:
         return json.loads(match.group(0))
 
 
-def _mock_plan(query: str) -> dict[str, Any]:
+def _mock_plan(query: str, *, has_kb: bool = False) -> dict[str, Any]:
     """无 LLM 时的确定性计划。"""
+    tasks: list[dict[str, Any]] = []
+    if has_kb:
+        tasks.append(
+            {
+                "id": "task-kb",
+                "type": "knowledge_research",
+                "description": f"从内部知识库检索与「{query}」相关的片段",
+                "dependsOn": [],
+            }
+        )
+    tasks.append(
+        {
+            "id": "task-1",
+            "type": "web_research",
+            "description": f"收集与「{query}」相关的官方资料、功能对比与生态信息",
+            "dependsOn": [],
+        }
+    )
     return {
         "title": f"调研：{query[:40]}",
         "objective": query,
-        "tasks": [
-            {
-                "id": "task-1",
-                "type": "web_research",
-                "description": f"收集与「{query}」相关的官方资料、功能对比与生态信息",
-                "dependsOn": [],
-            }
-        ],
+        "tasks": tasks,
     }
 
 
@@ -84,14 +97,16 @@ def create_plan(state: ResearchState) -> dict[str, Any]:
     )
     events.append(started)
 
+    has_kb = bool(state.get("knowledge_base_ids"))
     if settings.agent_mock_llm or not settings.deepseek_api_key:
-        plan = _mock_plan(state["user_query"])
+        plan = _mock_plan(state["user_query"], has_kb=has_kb)
     else:
         model = get_chat_model(temperature=0.1)
+        hint = f"\n已绑定知识库: {state.get('knowledge_base_ids')}" if has_kb else "\n未绑定知识库"
         resp = model.invoke(
             [
                 SystemMessage(content=_PLANNER_SYSTEM),
-                HumanMessage(content=state["user_query"]),
+                HumanMessage(content=state["user_query"] + hint),
             ]
         )
         plan = _extract_json(str(resp.content))

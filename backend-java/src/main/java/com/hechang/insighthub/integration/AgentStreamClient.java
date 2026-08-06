@@ -62,8 +62,10 @@ public class AgentStreamClient {
             int timeoutSec,
             Long nextEventId,
             String idempotencyKey,
+            List<String> knowledgeBaseIds,
             Consumer<JsonNode> onLine) {
-        Map<String, Object> body = buildBody(taskId, workspaceId, userId, query, timeoutSec, nextEventId);
+        Map<String, Object> body = buildBody(
+                taskId, workspaceId, userId, query, timeoutSec, nextEventId, knowledgeBaseIds);
         String key = idempotencyKey == null || idempotencyKey.isBlank()
                 ? taskId + "-stream-1"
                 : idempotencyKey;
@@ -199,7 +201,8 @@ public class AgentStreamClient {
             String userId,
             String query,
             int timeoutSec,
-            Long nextEventId) {
+            Long nextEventId,
+            List<String> knowledgeBaseIds) {
         Map<String, Object> config = new HashMap<>();
         config.put("maxSteps", 20);
         config.put("maxParallelism", 3);
@@ -215,7 +218,7 @@ public class AgentStreamClient {
         body.put("workspaceId", workspaceId);
         body.put("userId", userId);
         body.put("query", query);
-        body.put("knowledgeBaseIds", List.of());
+        body.put("knowledgeBaseIds", knowledgeBaseIds == null ? List.of() : knowledgeBaseIds);
         body.put("config", config);
         return body;
     }

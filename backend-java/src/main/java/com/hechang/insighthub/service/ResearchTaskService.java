@@ -4,7 +4,9 @@ import java.util.List;
 
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
+import com.hechang.insighthub.model.dto.knowledge.CitationResponse;
 import com.hechang.insighthub.model.dto.task.AgentTaskResponseDto;
+import com.hechang.insighthub.model.dto.task.CreateResearchTaskRequest;
 import com.hechang.insighthub.model.dto.task.CreateTaskAcceptedResponse;
 import com.hechang.insighthub.model.dto.task.TaskControlResponse;
 import com.hechang.insighthub.model.dto.task.TaskSummaryResponse;
@@ -17,16 +19,19 @@ import com.mybatisflex.core.service.IService;
 public interface ResearchTaskService extends IService<ResearchTask> {
 
     /** 异步创建任务：202 + 后台拉 Python 流 */
-    CreateTaskAcceptedResponse createAsync(String workspaceId, String query);
+    CreateTaskAcceptedResponse createAsync(String workspaceId, CreateResearchTaskRequest request);
 
     /** 同步执行（week1/2 兼容） */
-    AgentTaskResponseDto createAndRun(String workspaceId, String query);
+    AgentTaskResponseDto createAndRun(String workspaceId, CreateResearchTaskRequest request);
 
     /** 任务列表 */
     List<TaskSummaryResponse> list(String workspaceId);
 
     /** 任务详情 */
     TaskSummaryResponse get(String workspaceId, String taskId);
+
+    /** 任务引用列表（可追溯来源） */
+    List<CitationResponse> listCitations(String workspaceId, String taskId);
 
     /** SSE 事件流 */
     SseEmitter streamEvents(String workspaceId, String taskId, long fromEventNo);

@@ -1,7 +1,7 @@
 # InsightHub 服务通信协议
 
 > Java 平台服务 ↔ Python Agent 服务  
-> 第 1 周：同步 JSON。第 2 周：JWT + 工作空间隔离。第 3 周：NDJSON 流 + SSE 断线续传 + 暂停/取消/重试。
+> 第 1 周：同步 JSON。第 2 周：JWT + 工作空间隔离。第 3 周：NDJSON 流 + SSE 断线续传 + 暂停/取消/重试。第 4 周：知识库入库 + PGVector 混合检索 + 引用可追溯。
 
 ---
 
@@ -22,7 +22,7 @@ X-Idempotency-Key: <taskId>-attempt-<n>
 | workspaceId | string | 是 | 工作空间 ID |
 | userId | string | 是 | 发起用户 ID |
 | query | string | 是 | 研究主题 |
-| knowledgeBaseIds | string[] | 否 | 知识库 ID 列表（第 1 周可空） |
+| knowledgeBaseIds | string[] | 否 | 绑定的知识库 ID 列表（第 4 周生效；Agent 检索 PGVector） |
 | config.maxSteps | int | 否 | 默认 20 |
 | config.maxParallelism | int | 否 | 默认 3 |
 | config.requirePlanApproval | bool | 否 | 第 1 周固定按 false 处理 |
@@ -172,13 +172,25 @@ Base：`/api/v1/workspaces/{workspaceId}/research/tasks`
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
-| POST | `/` | **异步 202**，`data`=`{taskId,status,traceId}` |
-| POST | `/sync` | 同步（兼容 week1/2），结果在 `data` |
+| POST | `/` | **异步 202**，body 可含 `knowledgeBaseIds`；`data`=`{taskId,status,traceId}` |
+| POST | `/sync` | 同步（兼容 week1/2），可含 `knowledgeBaseIds`；结果在 `data` |
 | GET | `/{taskId}/events` | SSE（**不套信封**）；`Last-Event-ID` 或 `?fromEventNo=` 续传 |
+| GET | `/{taskId}/citations` | 引用列表（`citationNo` / `sourceType` / `documentId` / `chunkId`） |
 | POST | `/{taskId}/pause` | RUNNING→PAUSED |
 | POST | `/{taskId}/resume` | PAUSED→RUNNING |
 | POST | `/{taskId}/cancel` | 取消（含 GENERATING） |
 | POST | `/{taskId}/retry` | FAILED→RUNNING（202） |
+
+创建任务 body 示例：
+
+```json
+{
+  "query": "对比 Spring AI 与 LangChain4j",
+  "knowledgeBaseIds": ["kb-xxx"]
+}
+```
+
+`TASK_RESULT`（Python→Java）除 `reportMarkdown` 外可含 `citations[]`，Java 落库 `citation` 表。
 
 SSE 示例：
 
@@ -193,6 +205,33 @@ Accept: text/event-stream
 ### 5.3 工作空间与 Agent
 
 同第 2 周：`/api/v1/workspaces/**`、`/agents/**`；非成员返回信封 `code=40300`（HTTP 多为 200）。
+
+### 5.4 知识库（第 4 周）
+
+Base：`/api/v1/workspaces/{workspaceId}/knowledge-bases`（需成员权限）
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| POST | `/` | 创建 KB：`{name, description?}` |
+| GET | `/` | 列出本空间 KB |
+| GET | `/{kbId}` | 详情 |
+| DELETE | `/{kbId}` | 禁用（`DISABLED`）并清理 PG 片段 |
+| POST | `/{kbId}/documents` | `multipart` 上传 txt/md/pdf（≤5MB） |
+| GET | `/{kbId}/documents` | 文档列表 / `parseStatus` |
+| GET | `/{kbId}/documents/{docId}` | 文档详情 |
+| POST | `/{kbId}/documents/{docId}/reindex` | 失败重试入库 |
+
+`parseStatus`：`PENDING → PARSING → INDEXED|FAILED`。
+
+### 5.5 内部知识库 API（Java → Python）
+
+| 接口 | 说明 |
+| --- | --- |
+| `POST /internal/v1/knowledge/documents/ingest` | `{workspaceId,knowledgeBaseId,documentId,filePath,...}` → 分块+向量写入 PG |
+| `POST /internal/v1/knowledge/retrieve` | 混合检索（向量 + 关键词 + RRF） |
+| `POST /internal/v1/knowledge/chunks/delete-by-kb` | 删除某 KB 全部片段 |
+
+Embedding：`EMBEDDING_MOCK=true` 或 `AGENT_MOCK_LLM=true` 时用确定性 1536 维伪向量。
 
 API 文档：`http://localhost:8080/doc.html`。
 

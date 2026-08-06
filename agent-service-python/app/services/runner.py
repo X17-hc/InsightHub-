@@ -55,6 +55,8 @@ def _build_init_state(
         "retry_count": 0,
         "max_steps": request.config.max_steps,
         "enable_web_search": request.config.enable_web_search,
+        "knowledge_base_ids": list(request.knowledge_base_ids or []),
+        "citations": [],
         "errors": [],
         "status": "RUNNING",
         "events": initial_events,
@@ -73,6 +75,7 @@ def _task_result_line(
     status: str,
     report_markdown: str | None,
     error: dict[str, Any] | None,
+    citations: list[dict[str, Any]] | None = None,
 ) -> str:
     """终态摘要行（type=TASK_RESULT）。"""
     payload = {
@@ -81,6 +84,7 @@ def _task_result_line(
         "runId": run_id,
         "status": status,
         "reportMarkdown": report_markdown,
+        "citations": citations or [],
         "error": error,
     }
     return json.dumps(payload, ensure_ascii=False)
@@ -171,6 +175,7 @@ def _response_from_state(
             status="FAILED",
             reportMarkdown=final_state.get("report"),
             events=[AgentEvent.model_validate(e) for e in events_raw],
+            citations=list(final_state.get("citations") or []),
             error=AgentError(
                 code=str(err0.get("code") or "AGENT_EXECUTION_FAILED"),
                 message=str(err0.get("message") or "task failed"),
@@ -185,6 +190,7 @@ def _response_from_state(
         status="COMPLETED",
         reportMarkdown=final_state.get("report"),
         events=[AgentEvent.model_validate(e) for e in events_raw],
+        citations=list(final_state.get("citations") or []),
         error=None,
     )
 
@@ -478,6 +484,7 @@ def _stream_graph(
             status="COMPLETED",
             report_markdown=report,
             error=None,
+            citations=list(final_state.get("citations") or []),
         )
         return
 

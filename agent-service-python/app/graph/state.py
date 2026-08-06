@@ -37,6 +37,8 @@ class ResearchState(TypedDict, total=False):
     retry_count: int
     max_steps: int
     enable_web_search: bool
+    knowledge_base_ids: list[str]
+    citations: list[dict[str, Any]]
     errors: list[dict[str, Any]]
     status: str
     events: Annotated[list[dict[str, Any]], _merge_events]

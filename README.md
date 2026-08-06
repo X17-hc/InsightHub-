@@ -9,6 +9,7 @@
 - Planner → Supervisor → Researcher 产出 Markdown 报告
 - JWT / 工作空间 RBAC / Agent / 状态机 / Knife4j
 - 第 3 周：NDJSON 流式、SSE 断线续传、暂停/恢复/取消/重试、Redis 并发与限流
+- 第 4 周：知识库上传入库、PGVector 混合检索、任务绑定 `knowledgeBaseIds`、报告引用可追溯
 
 ## 快速启动
 
@@ -49,9 +50,10 @@ cd C:\Users\Dell\PycharmProjects\PythonTestProject\InsightHub
 .\scripts\run-week1-demo.ps1          # 同步 /sync 任务
 .\scripts\run-week2-isolation-demo.ps1 # 跨空间隔离（业务码 40300）
 .\scripts\run-week3-sse-demo.ps1       # SSE 续传 + pause/resume
+.\scripts\run-week4-rag-demo.ps1       # 知识库入库 + RAG 引用 + 隔离
 ```
 
-需 Redis（`127.0.0.1:6379`）与 MySQL 同时可用。
+需 Redis（`127.0.0.1:6379`）、MySQL 与 PostgreSQL/PGVector 同时可用。Agent 侧建议 `AGENT_MOCK_LLM=true`（或 `EMBEDDING_MOCK=true`）。
 
 ## 文档
 

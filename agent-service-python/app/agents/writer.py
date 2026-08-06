@@ -91,7 +91,28 @@ def write_report(state: ResearchState) -> dict[str, Any]:
         )
     )
 
-    return {"report": report, "step_count": step, "events": delta}
+    # 结构化引用，供 Java 落库 citation 表
+    citations: list[dict[str, Any]] = []
+    for i, ev in enumerate(evidence, start=1):
+        citations.append(
+            {
+                "citationNo": i,
+                "sourceTitle": ev.get("sourceTitle"),
+                "sourceUri": ev.get("sourceUri"),
+                "sourceType": ev.get("sourceType") or "WEB",
+                "documentId": ev.get("documentId"),
+                "chunkId": ev.get("chunkId"),
+                "quotedText": ev.get("quotedText"),
+                "verified": bool(ev.get("verified")),
+            }
+        )
+
+    return {
+        "report": report,
+        "citations": citations,
+        "step_count": step,
+        "events": delta,
+    }
 
 
 def finalize(state: ResearchState) -> dict[str, Any]:
@@ -104,7 +125,10 @@ def finalize(state: ResearchState) -> dict[str, Any]:
             run_id=state["run_id"],
             event_type="TASK_COMPLETED",
             node="finalize",
-            data={"hasReport": bool(state.get("report"))},
+            data={
+                "hasReport": bool(state.get("report")),
+                "citationCount": len(state.get("citations") or []),
+            },
         )
     ]
     return {"status": "COMPLETED", "events": delta}

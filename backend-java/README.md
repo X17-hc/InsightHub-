@@ -62,3 +62,10 @@ mvn -DskipTests spring-boot:run
 - `POST .../research/tasks/sync` → 同步（兼容旧演示）
 - `GET .../research/tasks/{id}/events` → SSE（`Last-Event-ID` / `fromEventNo`；仅此路径可用 `?access_token=`）
 - `POST .../pause|resume|cancel|retry`
+
+### 第 4 周知识库 API
+
+- `POST/GET/DELETE .../knowledge-bases`
+- `POST .../knowledge-bases/{kbId}/documents`（multipart）
+- 创建任务可带 `knowledgeBaseIds`；`GET .../tasks/{id}/citations` 查引用
+- 上传目录：`insighthub.upload.root-dir`（默认 `./data/uploads`）

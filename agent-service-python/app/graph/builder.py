@@ -1,10 +1,11 @@
-"""构建第 1 周最小 LangGraph：Planner → Supervisor → Researcher → write_report → finalize。"""
+"""构建研究图：Planner → Supervisor → Knowledge → Web → write_report → finalize。"""
 
 from __future__ import annotations
 
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
 
+from app.agents.knowledge_researcher import knowledge_research
 from app.agents.planner import create_plan
 from app.agents.researcher import web_research
 from app.agents.supervisor import dispatch_tasks
@@ -26,13 +27,15 @@ def build_graph(checkpointer: MemorySaver | None = None):
     graph = StateGraph(ResearchState)
     graph.add_node("create_plan", create_plan)
     graph.add_node("dispatch_tasks", dispatch_tasks)
+    graph.add_node("knowledge_research", knowledge_research)
     graph.add_node("web_research", web_research)
     graph.add_node("write_report", write_report)
     graph.add_node("finalize", finalize)
 
     graph.add_edge(START, "create_plan")
     graph.add_edge("create_plan", "dispatch_tasks")
-    graph.add_edge("dispatch_tasks", "web_research")
+    graph.add_edge("dispatch_tasks", "knowledge_research")
+    graph.add_edge("knowledge_research", "web_research")
     graph.add_edge("web_research", "write_report")
     graph.add_edge("write_report", "finalize")
     graph.add_edge("finalize", END)

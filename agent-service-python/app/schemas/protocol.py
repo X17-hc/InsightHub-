@@ -78,6 +78,7 @@ class AgentTaskResponse(BaseModel):
     status: Literal["COMPLETED", "FAILED"]
     report_markdown: str | None = Field(default=None, alias="reportMarkdown")
     events: list[AgentEvent] = Field(default_factory=list)
+    citations: list[dict[str, Any]] = Field(default_factory=list)
     error: AgentError | None = None
 
     model_config = {"populate_by_name": True}

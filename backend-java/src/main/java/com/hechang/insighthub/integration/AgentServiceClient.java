@@ -42,7 +42,8 @@ public class AgentServiceClient {
             String workspaceId,
             String userId,
             String query,
-            String traceId) {
+            String traceId,
+            List<String> knowledgeBaseIds) {
         Map<String, Object> config = new HashMap<>();
         config.put("maxSteps", 20);
         config.put("maxParallelism", 3);
@@ -54,7 +55,7 @@ public class AgentServiceClient {
         body.put("workspaceId", workspaceId);
         body.put("userId", userId);
         body.put("query", query);
-        body.put("knowledgeBaseIds", List.of());
+        body.put("knowledgeBaseIds", knowledgeBaseIds == null ? List.of() : knowledgeBaseIds);
         body.put("config", config);
 
         String idempotencyKey = taskId + "-attempt-1";

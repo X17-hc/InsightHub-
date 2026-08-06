@@ -31,6 +31,24 @@ class Settings(BaseSettings):
     redis_url: str = "redis://127.0.0.1:6379/0"
     default_timeout_seconds: int = 300
 
+    # PostgreSQL / PGVector（知识库片段）
+    postgres_host: str = "127.0.0.1"
+    postgres_port: int = 5432
+    postgres_db: str = "insighthub_vector"
+    postgres_user: str = "insighthub"
+    postgres_password: str = "123456"
+
+    # Embedding：维度固定 1536；mock 时用确定性伪向量
+    embedding_mock: bool = False
+    embedding_base_url: str = "https://api.openai.com/v1"
+    embedding_api_key: str = ""
+    embedding_model: str = "text-embedding-3-small"
+    embedding_dim: int = 1536
+
+    # 分块默认参数
+    chunk_size: int = 500
+    chunk_overlap: int = 80
+
 
 @lru_cache
 def get_settings() -> Settings:

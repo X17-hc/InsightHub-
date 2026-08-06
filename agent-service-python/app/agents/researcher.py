@@ -12,6 +12,7 @@ from app.core.config import get_settings
 from app.core.llm import get_chat_model
 from app.graph.events import make_event
 from app.graph.state import ResearchState
+from app.tools.web_fetch import fetch_url
 from app.tools.web_search import search_web
 
 _SYNTHETIC_SYSTEM = """你是研究助理。在没有实时搜索结果时，请基于公开常识生成结构化研究笔记。
@@ -67,6 +68,8 @@ def _to_evidence(items: list[dict[str, Any]], task_ref: str) -> list[dict[str, A
                 "sourceUri": item.get("url") or item.get("sourceUri") or "",
                 "quotedText": item.get("snippet") or item.get("quotedText") or "",
                 "sourceType": item.get("sourceType") or "WEB",
+                "documentId": item.get("documentId"),
+                "chunkId": item.get("chunkId"),
                 "verified": False,
             }
         )
@@ -145,6 +148,12 @@ def web_research(state: ResearchState) -> dict[str, Any]:
                     data={"tool": "web_search", "ok": True, "count": len(raw)},
                 )
             )
+            # 对首条结果尝试网页抽取，丰富 snippet（失败忽略）
+            first_url = raw[0].get("url")
+            if first_url:
+                fetched = fetch_url(str(first_url))
+                if fetched:
+                    raw[0] = {**raw[0], **fetched}
             evidence = _to_evidence(raw, str(sub.get("id") or "x"))
         else:
             # SYNTHETIC 降级：保证验收可演示且仍带来源字段

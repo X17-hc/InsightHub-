@@ -4,6 +4,7 @@ import java.sql.Timestamp;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -21,14 +22,20 @@ import com.hechang.insighthub.config.TaskProperties;
 import com.hechang.insighthub.exception.BusinessException;
 import com.hechang.insighthub.exception.ErrorCode;
 import com.hechang.insighthub.integration.AgentServiceClient;
+import com.hechang.insighthub.mapper.CitationMapper;
+import com.hechang.insighthub.mapper.KnowledgeBaseMapper;
 import com.hechang.insighthub.mapper.ReportMapper;
 import com.hechang.insighthub.mapper.ResearchTaskMapper;
 import com.hechang.insighthub.mapper.TaskEventMapper;
+import com.hechang.insighthub.model.dto.knowledge.CitationResponse;
 import com.hechang.insighthub.model.dto.task.AgentEventDto;
 import com.hechang.insighthub.model.dto.task.AgentTaskResponseDto;
+import com.hechang.insighthub.model.dto.task.CreateResearchTaskRequest;
 import com.hechang.insighthub.model.dto.task.CreateTaskAcceptedResponse;
 import com.hechang.insighthub.model.dto.task.TaskControlResponse;
 import com.hechang.insighthub.model.dto.task.TaskSummaryResponse;
+import com.hechang.insighthub.model.entity.Citation;
+import com.hechang.insighthub.model.entity.KnowledgeBase;
 import com.hechang.insighthub.model.entity.Report;
 import com.hechang.insighthub.model.entity.ResearchTask;
 import com.hechang.insighthub.model.enums.TaskStatus;
@@ -54,6 +61,8 @@ public class ResearchTaskServiceImpl extends ServiceImpl<ResearchTaskMapper, Res
     private final AgentServiceClient agentServiceClient;
     private final TaskEventMapper taskEventMapper;
     private final ReportMapper reportMapper;
+    private final CitationMapper citationMapper;
+    private final KnowledgeBaseMapper knowledgeBaseMapper;
     private final WorkspaceAccessService accessService;
     private final TaskStateMachine stateMachine;
     private final TransactionTemplate transactionTemplate;
@@ -71,6 +80,8 @@ public class ResearchTaskServiceImpl extends ServiceImpl<ResearchTaskMapper, Res
             AgentServiceClient agentServiceClient,
             TaskEventMapper taskEventMapper,
             ReportMapper reportMapper,
+            CitationMapper citationMapper,
+            KnowledgeBaseMapper knowledgeBaseMapper,
             WorkspaceAccessService accessService,
             TaskStateMachine stateMachine,
             TransactionTemplate transactionTemplate,
@@ -86,6 +97,8 @@ public class ResearchTaskServiceImpl extends ServiceImpl<ResearchTaskMapper, Res
         this.agentServiceClient = agentServiceClient;
         this.taskEventMapper = taskEventMapper;
         this.reportMapper = reportMapper;
+        this.citationMapper = citationMapper;
+        this.knowledgeBaseMapper = knowledgeBaseMapper;
         this.accessService = accessService;
         this.stateMachine = stateMachine;
         this.transactionTemplate = transactionTemplate;
@@ -101,9 +114,12 @@ public class ResearchTaskServiceImpl extends ServiceImpl<ResearchTaskMapper, Res
     }
 
     @Override
-    public CreateTaskAcceptedResponse createAsync(String workspaceId, String query) {
+    public CreateTaskAcceptedResponse createAsync(String workspaceId, CreateResearchTaskRequest request) {
         String userId = SecurityUtils.requireUserId();
         accessService.requireMember(workspaceId, userId);
+        String query = request.getQuery();
+        List<String> kbIds = normalizeKbIds(request.getKnowledgeBaseIds());
+        validateKnowledgeBases(workspaceId, kbIds);
         rateLimiter.acquire(userId);
         // true=占用了 Redis 许可；false=Redis 降级放行（勿 markHeld，避免恢复后抬高 permits）
         boolean slotAcquired = concurrencyService.tryAcquire(workspaceId);
@@ -116,7 +132,7 @@ public class ResearchTaskServiceImpl extends ServiceImpl<ResearchTaskMapper, Res
         }
 
         try {
-            insertCreatedTask(taskId, workspaceId, userId, query, traceId);
+            insertCreatedTask(taskId, workspaceId, userId, query, traceId, kbIds);
             advance(taskId, workspaceId, TaskStatus.CREATED, TaskStatus.PLANNING, 10, "create_plan");
             advance(taskId, workspaceId, TaskStatus.PLANNING, TaskStatus.RUNNING, 30, "dispatch_tasks");
             taskControlRedis.setControl(taskId, TaskControlRedis.CONTROL_RUNNING, ttl);
@@ -137,20 +153,23 @@ public class ResearchTaskServiceImpl extends ServiceImpl<ResearchTaskMapper, Res
     }
 
     @Override
-    public AgentTaskResponseDto createAndRun(String workspaceId, String query) {
+    public AgentTaskResponseDto createAndRun(String workspaceId, CreateResearchTaskRequest request) {
         String userId = SecurityUtils.requireUserId();
         accessService.requireMember(workspaceId, userId);
+        String query = request.getQuery();
+        List<String> kbIds = normalizeKbIds(request.getKnowledgeBaseIds());
+        validateKnowledgeBases(workspaceId, kbIds);
 
         String taskId = "task-" + UUID.randomUUID().toString().replace("-", "").substring(0, 16);
         String traceId = "trace-" + UUID.randomUUID().toString().replace("-", "").substring(0, 16);
 
-        insertCreatedTask(taskId, workspaceId, userId, query, traceId);
+        insertCreatedTask(taskId, workspaceId, userId, query, traceId, kbIds);
         advance(taskId, workspaceId, TaskStatus.CREATED, TaskStatus.PLANNING, 10, "create_plan");
         advance(taskId, workspaceId, TaskStatus.PLANNING, TaskStatus.RUNNING, 30, "dispatch_tasks");
 
         AgentTaskResponseDto response;
         try {
-            response = agentServiceClient.createTask(taskId, workspaceId, userId, query, traceId);
+            response = agentServiceClient.createTask(taskId, workspaceId, userId, query, traceId, kbIds);
         } catch (Exception ex) {
             log.error("Agent call failed taskId={} workspace={}", taskId, workspaceId, ex);
             markFailedSync(taskId, workspaceId, "AGENT_CALL_FAILED", "agent service call failed");
@@ -184,6 +203,7 @@ public class ResearchTaskServiceImpl extends ServiceImpl<ResearchTaskMapper, Res
                     String reportId = "report-" + UUID.randomUUID().toString().replace("-", "").substring(0, 16);
                     insertReport(reportId, taskId, workspaceId, response.getReportMarkdown(),
                             extractTitle(response.getReportMarkdown()));
+                    insertCitations(reportId, taskId, response.getCitations());
                 }
             } else {
                 advance(taskId, workspaceId, TaskStatus.RUNNING, TaskStatus.FAILED, 30, null);
@@ -215,6 +235,14 @@ public class ResearchTaskServiceImpl extends ServiceImpl<ResearchTaskMapper, Res
             throw BusinessException.notFound("task not found");
         }
         return toSummary(task);
+    }
+
+    @Override
+    public List<CitationResponse> listCitations(String workspaceId, String taskId) {
+        String userId = SecurityUtils.requireUserId();
+        accessService.requireMember(workspaceId, userId);
+        requireTask(workspaceId, taskId);
+        return citationMapper.listByTaskId(taskId).stream().map(this::toCitationResponse).toList();
     }
 
     @Override
@@ -323,7 +351,12 @@ public class ResearchTaskServiceImpl extends ServiceImpl<ResearchTaskMapper, Res
 
     /** 插入 CREATED 状态任务 */
     private void insertCreatedTask(
-            String taskId, String workspaceId, String creatorId, String query, String traceId) {
+            String taskId,
+            String workspaceId,
+            String creatorId,
+            String query,
+            String traceId,
+            List<String> knowledgeBaseIds) {
         ResearchTask task = new ResearchTask();
         task.setId(taskId);
         task.setWorkspaceId(workspaceId);
@@ -332,7 +365,88 @@ public class ResearchTaskServiceImpl extends ServiceImpl<ResearchTaskMapper, Res
         task.setStatus(TaskStatus.CREATED.name());
         task.setProgress(0);
         task.setTraceId(traceId);
+        try {
+            task.setKnowledgeBaseIds(objectMapper.writeValueAsString(
+                    knowledgeBaseIds == null ? List.of() : knowledgeBaseIds));
+        } catch (JsonProcessingException e) {
+            task.setKnowledgeBaseIds("[]");
+        }
         save(task);
+    }
+
+    /** 校验知识库均属于当前空间且 ACTIVE */
+    private void validateKnowledgeBases(String workspaceId, List<String> kbIds) {
+        if (kbIds == null || kbIds.isEmpty()) {
+            return;
+        }
+        for (String kbId : kbIds) {
+            KnowledgeBase kb = knowledgeBaseMapper.findByIdAndWorkspace(kbId, workspaceId);
+            if (kb == null) {
+                throw BusinessException.notFound("knowledge base not found: " + kbId);
+            }
+            if (!"ACTIVE".equalsIgnoreCase(kb.getStatus())) {
+                throw BusinessException.badRequest("KB_DISABLED", "knowledge base not active: " + kbId);
+            }
+        }
+    }
+
+    private static List<String> normalizeKbIds(List<String> raw) {
+        if (raw == null || raw.isEmpty()) {
+            return List.of();
+        }
+        List<String> out = new ArrayList<>();
+        for (String id : raw) {
+            if (id != null && !id.isBlank() && !out.contains(id)) {
+                out.add(id.trim());
+            }
+        }
+        return out;
+    }
+
+    private void insertCitations(String reportId, String taskId, List<Map<String, Object>> citations) {
+        citationMapper.deleteByTaskId(taskId);
+        if (citations == null || citations.isEmpty()) {
+            return;
+        }
+        int i = 0;
+        for (Map<String, Object> c : citations) {
+            i++;
+            Citation citation = new Citation();
+            citation.setId("cit-" + UUID.randomUUID().toString().replace("-", "").substring(0, 16));
+            citation.setReportId(reportId);
+            citation.setTaskId(taskId);
+            Object noObj = c.get("citationNo");
+            int no = noObj instanceof Number n ? n.intValue() : i;
+            citation.setCitationNo(no);
+            citation.setSourceTitle(str(c.get("sourceTitle")));
+            citation.setSourceUri(str(c.get("sourceUri")));
+            citation.setSourceType(str(c.get("sourceType")));
+            citation.setDocumentId(str(c.get("documentId")));
+            citation.setChunkId(str(c.get("chunkId")));
+            citation.setQuotedText(str(c.get("quotedText")));
+            citation.setVerified(Boolean.TRUE.equals(c.get("verified")) ? 1 : 0);
+            citationMapper.insert(citation);
+        }
+    }
+
+    private CitationResponse toCitationResponse(Citation c) {
+        return new CitationResponse(
+                c.getId(),
+                c.getReportId(),
+                c.getTaskId(),
+                c.getCitationNo(),
+                c.getSourceTitle(),
+                c.getSourceUri(),
+                c.getSourceType(),
+                c.getDocumentId(),
+                c.getChunkId(),
+                c.getQuotedText(),
+                c.getVerified(),
+                c.getCreatedAt());
+    }
+
+    private static String str(Object o) {
+        return o == null ? null : String.valueOf(o);
     }
 
     private ResearchTask requireTask(String workspaceId, String taskId) {

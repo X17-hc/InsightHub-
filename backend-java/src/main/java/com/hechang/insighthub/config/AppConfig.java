@@ -21,7 +21,8 @@ import reactor.netty.http.client.HttpClient;
         DemoProperties.class,
         JwtProperties.class,
         DocsProperties.class,
-        TaskProperties.class
+        TaskProperties.class,
+        UploadProperties.class
 })
 public class AppConfig {
 
