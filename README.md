@@ -18,9 +18,10 @@
 ```powershell
 cd C:\Users\Dell\PycharmProjects\PythonTestProject\InsightHub
 Copy-Item .env.example .env   # 若尚无 .env
+# 必须在 .env 中显式设置 JWT_SECRET 与 AGENT_INTERNAL_TOKEN
 .\scripts\start-mysql.ps1
 .\scripts\check-env.ps1
-.\scripts\apply-schema.ps1   # 首次或表结构变更后
+.\scripts\apply-schema.ps1   # 仅限空数据库首次初始化；不会用于结构升级
 ```
 
 ### 2. Python Agent（端口 8000）
@@ -53,7 +54,9 @@ cd C:\Users\Dell\PycharmProjects\PythonTestProject\InsightHub
 .\scripts\run-week4-rag-demo.ps1       # 知识库入库 + RAG 引用 + 隔离
 ```
 
-需 Redis（`127.0.0.1:6379`）、MySQL 与 PostgreSQL/PGVector 同时可用。Agent 侧建议 `AGENT_MOCK_LLM=true`（或 `EMBEDDING_MOCK=true`）。
+需 Redis（`127.0.0.1:6379`）、MySQL 与 PostgreSQL/PGVector 同时可用。`JWT_SECRET` 与
+`AGENT_INTERNAL_TOKEN` 均不得为空，Java 与 Python 必须使用相同的 `AGENT_INTERNAL_TOKEN`。
+Agent 侧建议 `AGENT_MOCK_LLM=true`（或 `EMBEDDING_MOCK=true`）。
 
 ## 文档
 

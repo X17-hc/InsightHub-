@@ -11,7 +11,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 public class JwtProperties {
 
     /** HMAC 密钥，生产环境必须足够长且保密 */
-    private String secret = "dev-only-change-me-please-use-long-secret";
+    private String secret = "";
 
     private long accessExpireMinutes = 120;
 

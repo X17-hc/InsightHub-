@@ -130,6 +130,7 @@ def test_timeout_triggers_failed(monkeypatch, _memory_control: InMemoryControlSt
             cls.n += 1
             return 0.0 if cls.n == 1 else 1e9
 
+        time = staticmethod(real_time.time)
         sleep = staticmethod(real_time.sleep)
 
     monkeypatch.setattr(runner_mod, "get_compiled_graph", lambda: _FakeGraph())

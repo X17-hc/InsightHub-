@@ -14,13 +14,27 @@ from app.core.config import get_settings
 
 logger = logging.getLogger(__name__)
 
+_INSERT_CHUNK_SQL = """
+    INSERT INTO document_chunk (
+      id, workspace_id, knowledge_base_id, document_id, chunk_index,
+      parent_chunk_id, content, content_tokens, metadata_json,
+      embedding, embedding_model, page_no, loc_start, loc_end
+    ) VALUES (
+      %(id)s, %(workspace_id)s, %(knowledge_base_id)s, %(document_id)s, %(chunk_index)s,
+      %(parent_chunk_id)s, %(content)s, %(content_tokens)s, %(metadata_json)s::jsonb,
+      %(embedding)s::vector, %(embedding_model)s, %(page_no)s, %(loc_start)s, %(loc_end)s
+    )
+"""
+
 
 def _dsn() -> str:
     """构造 libpq DSN。"""
     s = get_settings()
     return (
         f"host={s.postgres_host} port={s.postgres_port} dbname={s.postgres_db} "
-        f"user={s.postgres_user} password={s.postgres_password}"
+        f"user={s.postgres_user} password={s.postgres_password} "
+        f"connect_timeout={max(1, s.postgres_connect_timeout_seconds)} "
+        f"options='-c statement_timeout={max(1000, s.postgres_statement_timeout_ms)}'"
     )
 
 
@@ -61,26 +75,32 @@ def insert_chunks(rows: list[dict[str, Any]]) -> int:
     """
     if not rows:
         return 0
-    sql = """
-        INSERT INTO document_chunk (
-          id, workspace_id, knowledge_base_id, document_id, chunk_index,
-          parent_chunk_id, content, content_tokens, metadata_json,
-          embedding, embedding_model, page_no, loc_start, loc_end
-        ) VALUES (
-          %(id)s, %(workspace_id)s, %(knowledge_base_id)s, %(document_id)s, %(chunk_index)s,
-          %(parent_chunk_id)s, %(content)s, %(content_tokens)s, %(metadata_json)s::jsonb,
-          %(embedding)s::vector, %(embedding_model)s, %(page_no)s, %(loc_start)s, %(loc_end)s
-        )
-    """
+    with pg_conn() as conn:
+        return _insert_chunks(conn, rows)
+
+
+def replace_document_chunks(document_id: str, rows: list[dict[str, Any]]) -> tuple[int, int]:
+    """在单个事务中替换文档片段，插入失败时保留原数据。"""
     with pg_conn() as conn:
         with conn.cursor() as cur:
-            for row in rows:
-                payload = dict(row)
-                payload["embedding"] = _vector_literal(row["embedding"])
-                meta = row.get("metadata_json")
-                payload["metadata_json"] = json.dumps(meta or {}, ensure_ascii=False)
-                cur.execute(sql, payload)
-            return len(rows)
+            cur.execute("DELETE FROM document_chunk WHERE document_id = %s", (document_id,))
+            deleted = cur.rowcount or 0
+        inserted = _insert_chunks(conn, rows)
+        return deleted, inserted
+
+
+def _insert_chunks(conn: psycopg.Connection, rows: list[dict[str, Any]]) -> int:
+    """使用调用方事务批量插入片段。"""
+    if not rows:
+        return 0
+    with conn.cursor() as cur:
+        for row in rows:
+            payload = dict(row)
+            payload["embedding"] = _vector_literal(row["embedding"])
+            meta = row.get("metadata_json")
+            payload["metadata_json"] = json.dumps(meta or {}, ensure_ascii=False)
+            cur.execute(_INSERT_CHUNK_SQL, payload)
+    return len(rows)
 
 
 def vector_search(

@@ -8,6 +8,7 @@ public enum TaskStatus {
     PLANNING,
     WAITING_APPROVAL,
     RUNNING,
+    PAUSING,
     PAUSED,
     REVIEWING,
     GENERATING,

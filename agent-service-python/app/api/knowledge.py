@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
 
+from app.core.config import REPO_ROOT, get_settings
 from app.rag import pg
 from app.rag.ingest import ingest_document
 from app.rag.retrieve import retrieve
@@ -22,6 +24,18 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/internal/v1/knowledge", tags=["knowledge-internal"])
 
 
+def _validated_upload_path(raw_path: str) -> str:
+    """限制入库文件位于配置的上传目录，阻止读取任意本机文件。"""
+    root = Path(get_settings().upload_root_dir).expanduser()
+    if not root.is_absolute():
+        root = REPO_ROOT / root
+    root = root.resolve(strict=False)
+    candidate = Path(raw_path).expanduser().resolve(strict=True)
+    if not candidate.is_file() or not candidate.is_relative_to(root):
+        raise ValueError("filePath must be a file under UPLOAD_ROOT_DIR")
+    return str(candidate)
+
+
 @router.post("/documents/ingest", response_model=IngestDocumentResponse)
 def ingest(req: IngestDocumentRequest) -> IngestDocumentResponse:
     """解析本地文件并写入 PGVector（按 documentId 幂等）。"""
@@ -30,7 +44,7 @@ def ingest(req: IngestDocumentRequest) -> IngestDocumentResponse:
             workspace_id=req.workspace_id,
             knowledge_base_id=req.knowledge_base_id,
             document_id=req.document_id,
-            file_path=req.file_path,
+            file_path=_validated_upload_path(req.file_path),
             content_type=req.content_type,
             file_name=req.file_name,
         )

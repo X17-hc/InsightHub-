@@ -39,10 +39,6 @@ def ingest_document(
     vectors = embed_texts([c.content for c in chunks])
     model_name = "mock-sha256" if (settings.embedding_mock or settings.agent_mock_llm or not settings.embedding_api_key) else settings.embedding_model
 
-    deleted = pg.delete_chunks_by_document(document_id)
-    if deleted:
-        logger.info("deleted %s old chunks for document %s", deleted, document_id)
-
     rows: list[dict[str, Any]] = []
     for ch, vec in zip(chunks, vectors, strict=True):
         rows.append(
@@ -67,9 +63,11 @@ def ingest_document(
                 "loc_end": ch.loc_end,
             }
         )
-    pg.insert_chunks(rows)
+    deleted, inserted = pg.replace_document_chunks(document_id, rows)
+    if deleted:
+        logger.info("replaced %s old chunks for document %s", deleted, document_id)
     return {
         "documentId": document_id,
-        "chunkCount": len(rows),
+        "chunkCount": inserted,
         "embeddingModel": model_name,
     }

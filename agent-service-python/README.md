@@ -22,17 +22,20 @@ uv sync --extra dev
 uv run uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
-仓库根目录 `.env` 需配置 `DEEPSEEK_API_KEY`（或设置 `AGENT_MOCK_LLM=true` 跑演示）。
+仓库根目录 `.env` 必须配置与 Java 相同的 `AGENT_INTERNAL_TOKEN`。真实模型模式还需配置
+`DEEPSEEK_API_KEY`；也可设置 `AGENT_MOCK_LLM=true` 跑演示。
 
 ### Checkpoint / 多进程
 
-流式 pause/resume 依赖进程内 `MemorySaver`（`thread_id=taskId`）。请用**单 worker** 启动，例如：
+生产默认使用 PostgreSQL Checkpoint（`CHECKPOINT_BACKEND=postgres`，`thread_id=taskId`），并通过
+Redis 执行租约避免多 worker 同时驱动同一任务。PostgreSQL 和 Redis 不可用时拒绝启动任务。
+单元测试显式使用 `CHECKPOINT_BACKEND=memory`，不连接外部服务。
+
+可按部署容量启动多个 worker，例如：
 
 ```powershell
-uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1
+uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 2
 ```
-
-进程重启后无法跨进程 resume；Java 侧事件仍可从 MySQL 经 SSE 回放。
 
 ## 测试
 

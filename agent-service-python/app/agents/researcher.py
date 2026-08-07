@@ -11,6 +11,8 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from app.core.config import get_settings
 from app.core.llm import get_chat_model
 from app.graph.events import make_event
+from app.graph.deadline import remaining_seconds
+from app.graph.limits import claim_step
 from app.graph.state import ResearchState
 from app.tools.web_fetch import fetch_url
 from app.tools.web_search import search_web
@@ -84,8 +86,10 @@ def web_research(state: ResearchState) -> dict[str, Any]:
         evidence / completed_tasks / events 等状态增量。
     """
     settings = get_settings()
+    step, limit_failure = claim_step(state, "web_research")
+    if limit_failure is not None:
+        return limit_failure
     events = list(state.get("events") or [])
-    step = int(state.get("step_count") or 0) + 1
     task_id = state["task_id"]
     run_id = state["run_id"]
     delta: list[dict[str, Any]] = []
@@ -123,7 +127,7 @@ def web_research(state: ResearchState) -> dict[str, Any]:
         raw: list[dict[str, Any]] = []
         if state.get("enable_web_search", True):
             try:
-                raw = search_web(query)
+                raw = search_web(query, timeout_seconds=remaining_seconds(state, 30))
             except Exception as exc:  # noqa: BLE001 - 工具失败降级
                 delta.append(
                     make_event(
@@ -151,7 +155,7 @@ def web_research(state: ResearchState) -> dict[str, Any]:
             # 对首条结果尝试网页抽取，丰富 snippet（失败忽略）
             first_url = raw[0].get("url")
             if first_url:
-                fetched = fetch_url(str(first_url))
+                fetched = fetch_url(str(first_url), timeout_seconds=remaining_seconds(state, 12))
                 if fetched:
                     raw[0] = {**raw[0], **fetched}
             evidence = _to_evidence(raw, str(sub.get("id") or "x"))
@@ -160,7 +164,10 @@ def web_research(state: ResearchState) -> dict[str, Any]:
             if settings.agent_mock_llm or not settings.deepseek_api_key:
                 synthetic_items = _mock_evidence(query)
             else:
-                model = get_chat_model(temperature=0.2)
+                model = get_chat_model(
+                    temperature=0.2,
+                    timeout_seconds=remaining_seconds(state, 60),
+                )
                 resp = model.invoke(
                     [
                         SystemMessage(content=_SYNTHETIC_SYSTEM),

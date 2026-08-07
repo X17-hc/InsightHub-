@@ -36,6 +36,7 @@ class ResearchState(TypedDict, total=False):
     step_count: int
     retry_count: int
     max_steps: int
+    deadline_at: float
     enable_web_search: bool
     knowledge_base_ids: list[str]
     citations: list[dict[str, Any]]

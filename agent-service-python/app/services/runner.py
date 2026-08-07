@@ -10,7 +10,7 @@ from collections.abc import Iterator
 from typing import Any
 
 from app.core.config import get_settings
-from app.graph.builder import get_compiled_graph
+from app.graph.builder import delete_thread_checkpoint, get_compiled_graph
 from app.graph.events import make_event
 from app.schemas.protocol import (
     AgentError,
@@ -24,6 +24,7 @@ from app.services.control import (
     CONTROL_RUNNING,
     get_control_store,
 )
+from app.services.execution_lease import TaskExecutionConflict, hold_task_execution
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +55,7 @@ def _build_init_state(
         "step_count": 0,
         "retry_count": 0,
         "max_steps": request.config.max_steps,
+        "deadline_at": time.time() + max(1, int(request.config.timeout_seconds or 300)),
         "enable_web_search": request.config.enable_web_search,
         "knowledge_base_ids": list(request.knowledge_base_ids or []),
         "citations": [],
@@ -118,9 +120,27 @@ def run_research_task(request: AgentTaskRequest, trace_id: str | None = None) ->
     init_state = _build_init_state(request, run_id, trace, initial_events)
 
     try:
-        final_state = graph.invoke(
-            init_state,
-            config={"configurable": {"thread_id": request.task_id}},
+        with hold_task_execution(request.task_id, request.config.timeout_seconds + 600):
+            final_state = graph.invoke(
+                init_state,
+                config={"configurable": {"thread_id": request.task_id}},
+            )
+    except TaskExecutionConflict as exc:
+        fail_event = make_event(
+            events=initial_events,
+            task_id=request.task_id,
+            run_id=run_id,
+            event_type="TASK_FAILED",
+            node=None,
+            data={"code": "TASK_ALREADY_RUNNING", "message": str(exc)},
+        )
+        return AgentTaskResponse(
+            taskId=request.task_id,
+            runId=run_id,
+            status="FAILED",
+            reportMarkdown=None,
+            events=[AgentEvent.model_validate(e) for e in (initial_events + [fail_event])],
+            error=AgentError(code="TASK_ALREADY_RUNNING", message=str(exc), traceId=trace),
         )
     except Exception as exc:  # noqa: BLE001
         fail_event = make_event(
@@ -213,31 +233,42 @@ def stream_research_task(
     if not store.exists(request.task_id):
         store.set(request.task_id, CONTROL_RUNNING, ttl_seconds=timeout + 600)
 
-    # retry 续号：用占位事件把 next_event_id 锚定到 DB 已有最大号之后
-    seed_events: list[dict[str, Any]] = []
-    next_eid = request.config.next_event_id
-    if next_eid is not None and int(next_eid) > 1:
-        seed_events = [{"eventId": int(next_eid) - 1}]
+    try:
+        with hold_task_execution(request.task_id, timeout + 600):
+            # retry 续号：清除旧图状态，并用占位事件锚定 DB 已有最大号
+            seed_events: list[dict[str, Any]] = []
+            next_eid = request.config.next_event_id
+            if next_eid is not None and int(next_eid) > 1:
+                delete_thread_checkpoint(request.task_id)
+                seed_events = [{"eventId": int(next_eid) - 1}]
 
-    started = make_event(
-        events=seed_events,
-        task_id=request.task_id,
-        run_id=run_id,
-        event_type="TASK_STARTED",
-        node=None,
-        data={"traceId": trace, "query": request.query},
-    )
-    yield _dumps_event(started)
+            started = make_event(
+                events=seed_events,
+                task_id=request.task_id,
+                run_id=run_id,
+                event_type="TASK_STARTED",
+                node=None,
+                data={"traceId": trace, "query": request.query},
+            )
+            yield _dumps_event(started)
 
-    init_state = _build_init_state(request, run_id, trace, [started])
-    yield from _stream_graph(
-        task_id=request.task_id,
-        run_id=run_id,
-        trace=trace,
-        timeout=timeout,
-        input_state=init_state,
-        resume=False,
-    )
+            init_state = _build_init_state(request, run_id, trace, [started])
+            yield from _stream_graph(
+                task_id=request.task_id,
+                run_id=run_id,
+                trace=trace,
+                timeout=timeout,
+                input_state=init_state,
+                resume=False,
+            )
+    except TaskExecutionConflict as exc:
+        yield _task_result_line(
+            task_id=request.task_id,
+            run_id=run_id,
+            status="FAILED",
+            report_markdown=None,
+            error={"code": "TASK_ALREADY_RUNNING", "message": str(exc), "traceId": trace},
+        )
 
 
 def resume_research_task(
@@ -260,31 +291,47 @@ def resume_research_task(
     store = get_control_store()
     store.set(task_id, CONTROL_RUNNING, ttl_seconds=timeout + 600)
 
-    graph = get_compiled_graph()
-    config = {"configurable": {"thread_id": task_id}}
-    # 与 Checkpoint 对齐 runId / traceId，避免控制事件与节点事件不一致
-    run = run_id
-    trace = trace_id
+    run = run_id or f"run-{uuid.uuid4().hex[:12]}"
+    trace = trace_id or f"trace-{uuid.uuid4().hex[:12]}"
     try:
-        snap = graph.get_state(config)
-        values = (snap.values if snap is not None else None) or {}
-        if not run:
-            run = values.get("run_id") or f"run-{uuid.uuid4().hex[:12]}"
-        if not trace:
-            trace = values.get("trace_id") or f"trace-{uuid.uuid4().hex[:12]}"
-    except Exception:  # noqa: BLE001
-        run = run or f"run-{uuid.uuid4().hex[:12]}"
-        trace = trace or f"trace-{uuid.uuid4().hex[:12]}"
+        with hold_task_execution(task_id, timeout + 600):
+            graph = get_compiled_graph()
+            config = {"configurable": {"thread_id": task_id}}
+            snap = graph.get_state(config)
+            values = (snap.values if snap is not None else None) or {}
+            if not values:
+                yield _task_result_line(
+                    task_id=task_id,
+                    run_id=run,
+                    status="FAILED",
+                    report_markdown=None,
+                    error={"code": "NO_CHECKPOINT", "message": "checkpoint not found", "traceId": trace},
+                )
+                return
+            run = run_id or values.get("run_id") or run
+            trace = trace_id or values.get("trace_id") or trace
+            graph.update_state(
+                config,
+                {"status": "RUNNING", "deadline_at": time.time() + timeout},
+            )
 
-    # LangGraph：None 输入表示从 checkpoint 继续
-    yield from _stream_graph(
-        task_id=task_id,
-        run_id=run,
-        trace=trace,
-        timeout=timeout,
-        input_state=None,
-        resume=True,
-    )
+            # LangGraph：None 输入表示从 checkpoint 继续
+            yield from _stream_graph(
+                task_id=task_id,
+                run_id=run,
+                trace=trace,
+                timeout=timeout,
+                input_state=None,
+                resume=True,
+            )
+    except TaskExecutionConflict as exc:
+        yield _task_result_line(
+            task_id=task_id,
+            run_id=run,
+            status="FAILED",
+            report_markdown=None,
+            error={"code": "TASK_ALREADY_RUNNING", "message": str(exc), "traceId": trace},
+        )
 
 
 def _persist_control_event(

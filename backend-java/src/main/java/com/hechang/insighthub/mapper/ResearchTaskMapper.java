@@ -45,6 +45,24 @@ public interface ResearchTaskMapper extends BaseMapper<ResearchTask> {
             """)
     ResearchTask findByIdAndWorkspace(@Param("id") String id, @Param("workspaceId") String workspaceId);
 
+    /** 在终态事务内锁定任务行，避免暂停、取消与完成相互覆盖。 */
+    @Select("""
+            SELECT id AS id,
+                   workspace_id AS workspaceId,
+                   creator_id AS creatorId,
+                   query AS query,
+                   status AS status,
+                   knowledge_base_ids AS knowledgeBaseIds,
+                   trace_id AS traceId,
+                   current_run_id AS currentRunId
+            FROM research_task
+            WHERE id = #{id} AND workspace_id = #{workspaceId}
+            FOR UPDATE
+            """)
+    ResearchTask findByIdAndWorkspaceForUpdate(
+            @Param("id") String id,
+            @Param("workspaceId") String workspaceId);
+
     /** 按工作空间列出任务（创建时间倒序） */
     @Select("""
             SELECT id AS id,
@@ -91,6 +109,26 @@ public interface ResearchTaskMapper extends BaseMapper<ResearchTask> {
             @Param("id") String id,
             @Param("workspaceId") String workspaceId,
             @Param("status") String status,
+            @Param("progress") Integer progress,
+            @Param("currentNode") String currentNode);
+
+    /** 仅当前状态匹配时迁移，防止并发控制请求覆盖终态。 */
+    @Update("""
+            UPDATE research_task
+            SET status = #{toStatus},
+                progress = COALESCE(#{progress}, progress),
+                current_node = COALESCE(#{currentNode}, current_node),
+                started_at = COALESCE(started_at, NOW()),
+                updated_at = NOW()
+            WHERE id = #{id}
+              AND workspace_id = #{workspaceId}
+              AND status = #{fromStatus}
+            """)
+    int updateStatusIfCurrent(
+            @Param("id") String id,
+            @Param("workspaceId") String workspaceId,
+            @Param("fromStatus") String fromStatus,
+            @Param("toStatus") String toStatus,
             @Param("progress") Integer progress,
             @Param("currentNode") String currentNode);
 

@@ -5,6 +5,7 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -39,6 +40,7 @@ import com.hechang.insighthub.model.entity.KnowledgeBase;
 import com.hechang.insighthub.model.entity.Report;
 import com.hechang.insighthub.model.entity.ResearchTask;
 import com.hechang.insighthub.model.enums.TaskStatus;
+import com.hechang.insighthub.model.enums.WorkspaceRole;
 import com.hechang.insighthub.redis.TaskControlRedis;
 import com.hechang.insighthub.redis.TaskCreateRateLimiter;
 import com.hechang.insighthub.redis.TaskSlotTracker;
@@ -121,14 +123,12 @@ public class ResearchTaskServiceImpl extends ServiceImpl<ResearchTaskMapper, Res
         List<String> kbIds = normalizeKbIds(request.getKnowledgeBaseIds());
         validateKnowledgeBases(workspaceId, kbIds);
         rateLimiter.acquire(userId);
-        // true=占用了 Redis 许可；false=Redis 降级放行（勿 markHeld，避免恢复后抬高 permits）
-        boolean slotAcquired = concurrencyService.tryAcquire(workspaceId);
-
         String taskId = "task-" + UUID.randomUUID().toString().replace("-", "").substring(0, 16);
         String traceId = "trace-" + UUID.randomUUID().toString().replace("-", "").substring(0, 16);
         int ttl = taskProperties.getDefaultTimeoutSeconds() + 600;
-        if (slotAcquired) {
-            slotTracker.markHeld(taskId, workspaceId, ttl);
+        String permitId = concurrencyService.tryAcquire(workspaceId, ttl);
+        if (permitId != null) {
+            slotTracker.markHeld(taskId, workspaceId, permitId, ttl);
         }
 
         try {
@@ -138,13 +138,12 @@ public class ResearchTaskServiceImpl extends ServiceImpl<ResearchTaskMapper, Res
             taskControlRedis.setControl(taskId, TaskControlRedis.CONTROL_RUNNING, ttl);
             taskExecutionService.executeStream(taskId, workspaceId, userId, query, traceId, false);
         } catch (RejectedExecutionException ex) {
-            mapper.updateTaskFinished(
-                    taskId, workspaceId, TaskStatus.FAILED.name(), null,
-                    "EXECUTOR_REJECTED", truncate("task executor queue full", 1024));
-            slotTracker.releaseOnce(taskId, workspaceId, () -> concurrencyService.release(workspaceId));
+            markFailedSync(taskId, workspaceId, "EXECUTOR_REJECTED", "task executor queue full");
+            releaseTaskSlot(taskId, workspaceId);
             throw new BusinessException(ErrorCode.OPERATION_ERROR, "EXECUTOR_REJECTED: task executor busy");
         } catch (RuntimeException ex) {
-            slotTracker.releaseOnce(taskId, workspaceId, () -> concurrencyService.release(workspaceId));
+            markFailedSync(taskId, workspaceId, "TASK_DISPATCH_FAILED", ex.getMessage());
+            releaseTaskSlot(taskId, workspaceId);
             throw ex;
         }
 
@@ -159,64 +158,82 @@ public class ResearchTaskServiceImpl extends ServiceImpl<ResearchTaskMapper, Res
         String query = request.getQuery();
         List<String> kbIds = normalizeKbIds(request.getKnowledgeBaseIds());
         validateKnowledgeBases(workspaceId, kbIds);
+        rateLimiter.acquire(userId);
 
         String taskId = "task-" + UUID.randomUUID().toString().replace("-", "").substring(0, 16);
         String traceId = "trace-" + UUID.randomUUID().toString().replace("-", "").substring(0, 16);
+        int ttl = taskProperties.getDefaultTimeoutSeconds() + 600;
+        String permitId = concurrencyService.tryAcquire(workspaceId, ttl);
 
-        insertCreatedTask(taskId, workspaceId, userId, query, traceId, kbIds);
-        advance(taskId, workspaceId, TaskStatus.CREATED, TaskStatus.PLANNING, 10, "create_plan");
-        advance(taskId, workspaceId, TaskStatus.PLANNING, TaskStatus.RUNNING, 30, "dispatch_tasks");
-
-        AgentTaskResponseDto response;
         try {
-            response = agentServiceClient.createTask(taskId, workspaceId, userId, query, traceId, kbIds);
-        } catch (Exception ex) {
-            log.error("Agent call failed taskId={} workspace={}", taskId, workspaceId, ex);
-            markFailedSync(taskId, workspaceId, "AGENT_CALL_FAILED", "agent service call failed");
-            throw new BusinessException(ErrorCode.SYSTEM_ERROR, "AGENT_CALL_FAILED: agent service call failed");
-        }
-        if (response == null) {
-            markFailedSync(taskId, workspaceId, "AGENT_EMPTY_RESPONSE", "agent service returned empty body");
-            throw new BusinessException(
-                    ErrorCode.SYSTEM_ERROR, "AGENT_EMPTY_RESPONSE: agent service returned empty body");
-        }
-        response.setTraceId(traceId);
+            insertCreatedTask(taskId, workspaceId, userId, query, traceId, kbIds);
+            advance(taskId, workspaceId, TaskStatus.CREATED, TaskStatus.PLANNING, 10, "create_plan");
+            advance(taskId, workspaceId, TaskStatus.PLANNING, TaskStatus.RUNNING, 30, "dispatch_tasks");
 
-        String status = response.getStatus() == null ? "FAILED" : response.getStatus();
-        String errorCode = null;
-        String errorMessage = null;
-        if (response.getError() != null) {
-            errorCode = String.valueOf(response.getError().getOrDefault("code", "AGENT_ERROR"));
-            errorMessage = String.valueOf(response.getError().getOrDefault("message", ""));
-        }
-
-        final String finalStatus = status;
-        final String finalErrorCode = errorCode;
-        final String finalErrorMessage = errorMessage;
-        transactionTemplate.executeWithoutResult(tx -> {
-            if ("COMPLETED".equalsIgnoreCase(finalStatus)) {
-                advance(taskId, workspaceId, TaskStatus.RUNNING, TaskStatus.GENERATING, 80, "write_report");
-                advance(taskId, workspaceId, TaskStatus.GENERATING, TaskStatus.COMPLETED, 100, "finalize");
-                mapper.updateTaskFinished(
-                        taskId, workspaceId, TaskStatus.COMPLETED.name(), response.getRunId(), null, null);
-                if (response.getReportMarkdown() != null) {
-                    String reportId = "report-" + UUID.randomUUID().toString().replace("-", "").substring(0, 16);
-                    insertReport(reportId, taskId, workspaceId, response.getReportMarkdown(),
-                            extractTitle(response.getReportMarkdown()));
-                    insertCitations(reportId, taskId, response.getCitations());
-                }
-            } else {
-                advance(taskId, workspaceId, TaskStatus.RUNNING, TaskStatus.FAILED, 30, null);
-                mapper.updateTaskFinished(
-                        taskId, workspaceId, TaskStatus.FAILED.name(), response.getRunId(),
-                        finalErrorCode, truncate(finalErrorMessage, 1024));
+            AgentTaskResponseDto response;
+            try {
+                response = agentServiceClient.createTask(taskId, workspaceId, userId, query, traceId, kbIds);
+            } catch (Exception ex) {
+                log.error("Agent call failed taskId={} workspace={}", taskId, workspaceId, ex);
+                markFailedSync(taskId, workspaceId, "AGENT_CALL_FAILED", "agent service call failed");
+                throw new BusinessException(ErrorCode.SYSTEM_ERROR, "AGENT_CALL_FAILED: agent service call failed");
             }
-            insertEvents(taskId, response.getEvents());
-        });
+            if (response == null) {
+                markFailedSync(taskId, workspaceId, "AGENT_EMPTY_RESPONSE", "agent service returned empty body");
+                throw new BusinessException(
+                        ErrorCode.SYSTEM_ERROR, "AGENT_EMPTY_RESPONSE: agent service returned empty body");
+            }
+            response.setTraceId(traceId);
 
-        response.setTaskId(taskId);
-        response.setStatus(status.toUpperCase());
-        return response;
+            String status = response.getStatus() == null ? "FAILED" : response.getStatus();
+            String errorCode = null;
+            String errorMessage = null;
+            if (response.getError() != null) {
+                errorCode = String.valueOf(response.getError().getOrDefault("code", "AGENT_ERROR"));
+                errorMessage = String.valueOf(response.getError().getOrDefault("message", ""));
+            }
+
+            final String finalStatus = status;
+            final String finalErrorCode = errorCode;
+            final String finalErrorMessage = errorMessage;
+            try {
+                transactionTemplate.executeWithoutResult(tx -> {
+                    if ("COMPLETED".equalsIgnoreCase(finalStatus)) {
+                        if (response.getReportMarkdown() == null || response.getReportMarkdown().isBlank()) {
+                            throw new IllegalStateException("completed task has no report");
+                        }
+                        advance(taskId, workspaceId, TaskStatus.RUNNING, TaskStatus.GENERATING, 80, "write_report");
+                        String reportId = "report-"
+                                + UUID.randomUUID().toString().replace("-", "").substring(0, 16);
+                        insertReport(reportId, taskId, workspaceId, response.getReportMarkdown(),
+                                extractTitle(response.getReportMarkdown()));
+                        insertCitations(reportId, taskId, response.getCitations());
+                        advance(taskId, workspaceId, TaskStatus.GENERATING, TaskStatus.COMPLETED, 100, "finalize");
+                        mapper.updateTaskFinished(
+                                taskId, workspaceId, TaskStatus.COMPLETED.name(), response.getRunId(), null, null);
+                    } else {
+                        advance(taskId, workspaceId, TaskStatus.RUNNING, TaskStatus.FAILED, 30, null);
+                        mapper.updateTaskFinished(
+                                taskId, workspaceId, TaskStatus.FAILED.name(), response.getRunId(),
+                                finalErrorCode, truncate(finalErrorMessage, 1024));
+                    }
+                    insertEvents(taskId, response.getEvents());
+                });
+            } catch (RuntimeException ex) {
+                log.error("Persist agent result failed taskId={} workspace={}", taskId, workspaceId, ex);
+                markFailedSync(
+                        taskId, workspaceId, response.getRunId(),
+                        "REPORT_PERSIST_FAILED", "persist agent result failed");
+                throw new BusinessException(
+                        ErrorCode.SYSTEM_ERROR, "REPORT_PERSIST_FAILED: persist agent result failed");
+            }
+
+            response.setTaskId(taskId);
+            response.setStatus(status.toUpperCase());
+            return response;
+        } finally {
+            concurrencyService.release(workspaceId, permitId);
+        }
     }
 
     @Override
@@ -255,26 +272,48 @@ public class ResearchTaskServiceImpl extends ServiceImpl<ResearchTaskMapper, Res
     @Override
     public TaskControlResponse pause(String workspaceId, String taskId) {
         String userId = SecurityUtils.requireUserId();
-        accessService.requireMember(workspaceId, userId);
-        ResearchTask row = requireTask(workspaceId, taskId);
-        stateMachine.transition(TaskStatus.valueOf(row.getStatus()), TaskStatus.PAUSED);
-        // 不在此处 invalidate：需让当前 consumer 收完 TASK_PAUSED/TASK_RESULT；
-        // 侧效已对 PAUSED 忽略 NODE_*；resume/cancel 再抢占世代
+        requireControllableTask(workspaceId, taskId, userId);
+        transactionTemplate.executeWithoutResult(tx -> {
+            ResearchTask locked = requireTaskForUpdate(workspaceId, taskId);
+            stateMachine.transition(TaskStatus.valueOf(locked.getStatus()), TaskStatus.PAUSING);
+            int updated = mapper.updateStatusIfCurrent(
+                    taskId, workspaceId, TaskStatus.RUNNING.name(), TaskStatus.PAUSING.name(), null, null);
+            if (updated != 1) {
+                throw BusinessException.conflict("TASK_STATE_CHANGED", "task status changed while pausing");
+            }
+        });
         taskControlRedis.setControl(
                 taskId, TaskControlRedis.CONTROL_PAUSED, taskProperties.getDefaultTimeoutSeconds() + 600);
-        mapper.updateStatus(taskId, workspaceId, TaskStatus.PAUSED.name(), null, null);
-        return new TaskControlResponse(taskId, TaskStatus.PAUSED.name());
+        return new TaskControlResponse(taskId, TaskStatus.PAUSING.name());
     }
 
     @Override
     public TaskControlResponse resume(String workspaceId, String taskId) {
         String userId = SecurityUtils.requireUserId();
-        accessService.requireMember(workspaceId, userId);
-        ResearchTask row = requireTask(workspaceId, taskId);
+        ResearchTask row = requireControllableTask(workspaceId, taskId, userId);
         stateMachine.transition(TaskStatus.valueOf(row.getStatus()), TaskStatus.RUNNING);
-        taskControlRedis.setControl(
-                taskId, TaskControlRedis.CONTROL_RUNNING, taskProperties.getDefaultTimeoutSeconds() + 600);
-        mapper.updateStatus(taskId, workspaceId, TaskStatus.RUNNING.name(), null, null);
+        int ttl = taskProperties.getDefaultTimeoutSeconds() + 600;
+        String permitId = concurrencyService.tryAcquire(workspaceId, ttl);
+        if (permitId != null) {
+            slotTracker.markHeld(taskId, workspaceId, permitId, ttl);
+        }
+        try {
+            transactionTemplate.executeWithoutResult(tx -> {
+                ResearchTask locked = requireTaskForUpdate(workspaceId, taskId);
+                stateMachine.transition(TaskStatus.valueOf(locked.getStatus()), TaskStatus.RUNNING);
+                int updated = mapper.updateStatusIfCurrent(
+                        taskId, workspaceId, TaskStatus.PAUSED.name(), TaskStatus.RUNNING.name(), null, null);
+                if (updated != 1) {
+                    throw BusinessException.conflict(
+                            "TASK_STATE_CHANGED", "task status changed while resuming");
+                }
+            });
+        } catch (RuntimeException ex) {
+            releaseTaskSlot(taskId, workspaceId);
+            throw ex;
+        }
+        streamLease.invalidate(taskId);
+        taskControlRedis.setControl(taskId, TaskControlRedis.CONTROL_RUNNING, ttl);
         try {
             taskExecutionService.executeStream(
                     taskId, workspaceId, row.getCreatorId(), row.getQuery(), row.getTraceId(), true);
@@ -282,8 +321,17 @@ public class ResearchTaskServiceImpl extends ServiceImpl<ResearchTaskMapper, Res
             // 回滚为 PAUSED，避免无 worker 的 RUNNING 脏状态
             taskControlRedis.setControl(
                     taskId, TaskControlRedis.CONTROL_PAUSED, taskProperties.getDefaultTimeoutSeconds() + 600);
-            mapper.updateStatus(taskId, workspaceId, TaskStatus.PAUSED.name(), null, null);
+            mapper.updateStatusIfCurrent(
+                    taskId, workspaceId, TaskStatus.RUNNING.name(), TaskStatus.PAUSED.name(), null, null);
+            releaseTaskSlot(taskId, workspaceId);
             throw new BusinessException(ErrorCode.OPERATION_ERROR, "EXECUTOR_REJECTED: task executor busy");
+        } catch (RuntimeException ex) {
+            taskControlRedis.setControl(
+                    taskId, TaskControlRedis.CONTROL_PAUSED, taskProperties.getDefaultTimeoutSeconds() + 600);
+            mapper.updateStatusIfCurrent(
+                    taskId, workspaceId, TaskStatus.RUNNING.name(), TaskStatus.PAUSED.name(), null, null);
+            releaseTaskSlot(taskId, workspaceId);
+            throw ex;
         }
         return new TaskControlResponse(taskId, TaskStatus.RUNNING.name());
     }
@@ -291,29 +339,25 @@ public class ResearchTaskServiceImpl extends ServiceImpl<ResearchTaskMapper, Res
     @Override
     public TaskControlResponse cancel(String workspaceId, String taskId) {
         String userId = SecurityUtils.requireUserId();
-        accessService.requireMember(workspaceId, userId);
-        ResearchTask row = requireTask(workspaceId, taskId);
-        TaskStatus from = TaskStatus.valueOf(row.getStatus());
-        if (from == TaskStatus.COMPLETED || from == TaskStatus.CANCELLED) {
-            throw BusinessException.conflict("INVALID_STATUS_TRANSITION", "cannot cancel from " + from);
-        }
-        try {
+        requireControllableTask(workspaceId, taskId, userId);
+        StoredTaskEvent cancelled = transactionTemplate.execute(tx -> {
+            ResearchTask row = requireTaskForUpdate(workspaceId, taskId);
+            TaskStatus from = TaskStatus.valueOf(row.getStatus());
             stateMachine.transition(from, TaskStatus.CANCELLED);
-        } catch (BusinessException ex) {
-            // 允许 CREATED/PLANNING/RUNNING/PAUSED/GENERATING
-            if (from != TaskStatus.CREATED && from != TaskStatus.PLANNING
-                    && from != TaskStatus.RUNNING && from != TaskStatus.PAUSED
-                    && from != TaskStatus.GENERATING) {
-                throw ex;
-            }
-        }
+            mapper.updateTaskFinished(
+                    taskId, workspaceId, TaskStatus.CANCELLED.name(), row.getCurrentRunId(),
+                    "CANCELLED", truncate("cancelled by user", 1024));
+            return insertTerminalEvent(
+                    taskId,
+                    row.getCurrentRunId(),
+                    TaskStatus.CANCELLED.name(),
+                    Map.of("code", "CANCELLED", "message", "cancelled by user"));
+        });
         streamLease.invalidate(taskId);
         taskControlRedis.setControl(
                 taskId, TaskControlRedis.CONTROL_CANCELLED, taskProperties.getDefaultTimeoutSeconds() + 600);
-        mapper.updateTaskFinished(
-                taskId, workspaceId, TaskStatus.CANCELLED.name(), row.getCurrentRunId(),
-                "CANCELLED", truncate("cancelled by user", 1024));
-        slotTracker.releaseOnce(taskId, workspaceId, () -> concurrencyService.release(workspaceId));
+        publishStoredEvent(taskId, cancelled);
+        releaseTaskSlot(taskId, workspaceId);
         sseHub.completeTask(taskId);
         return new TaskControlResponse(taskId, TaskStatus.CANCELLED.name());
     }
@@ -321,29 +365,46 @@ public class ResearchTaskServiceImpl extends ServiceImpl<ResearchTaskMapper, Res
     @Override
     public CreateTaskAcceptedResponse retry(String workspaceId, String taskId) {
         String userId = SecurityUtils.requireUserId();
-        accessService.requireMember(workspaceId, userId);
-        ResearchTask row = requireTask(workspaceId, taskId);
-        stateMachine.transition(TaskStatus.valueOf(row.getStatus()), TaskStatus.RUNNING);
+        ResearchTask row = requireControllableTask(workspaceId, taskId, userId);
         rateLimiter.acquire(userId);
-        boolean slotAcquired = concurrencyService.tryAcquire(workspaceId);
         int ttl = taskProperties.getDefaultTimeoutSeconds() + 600;
-        if (slotAcquired) {
-            slotTracker.markHeld(taskId, workspaceId, ttl);
+        String permitId = concurrencyService.tryAcquire(workspaceId, ttl);
+        if (permitId != null) {
+            slotTracker.markHeld(taskId, workspaceId, permitId, ttl);
         }
 
         String runId = "run-" + UUID.randomUUID().toString().replace("-", "").substring(0, 12);
-        mapper.prepareRetry(taskId, workspaceId, runId);
-        mapper.updateStatus(taskId, workspaceId, TaskStatus.RUNNING.name(), 30, "retry");
+        try {
+            transactionTemplate.executeWithoutResult(tx -> {
+                ResearchTask locked = requireTaskForUpdate(workspaceId, taskId);
+                stateMachine.transition(TaskStatus.valueOf(locked.getStatus()), TaskStatus.RUNNING);
+                mapper.prepareRetry(taskId, workspaceId, runId);
+                int updated = mapper.updateStatusIfCurrent(
+                        taskId, workspaceId, TaskStatus.FAILED.name(), TaskStatus.RUNNING.name(), 30, "retry");
+                if (updated != 1) {
+                    throw BusinessException.conflict("TASK_STATE_CHANGED", "task status changed while retrying");
+                }
+            });
+        } catch (RuntimeException ex) {
+            releaseTaskSlot(taskId, workspaceId);
+            throw ex;
+        }
         taskControlRedis.setControl(taskId, TaskControlRedis.CONTROL_RUNNING, ttl);
         try {
             // 全量 stream 重跑同 taskId（event_no 继续递增）
             taskExecutionService.executeStream(
                     taskId, workspaceId, row.getCreatorId(), row.getQuery(), row.getTraceId(), false);
         } catch (RejectedExecutionException ex) {
-            slotTracker.releaseOnce(taskId, workspaceId, () -> concurrencyService.release(workspaceId));
+            markFailedSync(
+                    taskId, workspaceId, runId,
+                    "EXECUTOR_REJECTED", "task executor queue full");
+            releaseTaskSlot(taskId, workspaceId);
             throw new BusinessException(ErrorCode.OPERATION_ERROR, "EXECUTOR_REJECTED: task executor busy");
         } catch (RuntimeException ex) {
-            slotTracker.releaseOnce(taskId, workspaceId, () -> concurrencyService.release(workspaceId));
+            markFailedSync(
+                    taskId, workspaceId, runId,
+                    "RETRY_SUBMIT_FAILED", ex.getMessage());
+            releaseTaskSlot(taskId, workspaceId);
             throw ex;
         }
         return new CreateTaskAcceptedResponse(taskId, TaskStatus.RUNNING.name(), row.getTraceId());
@@ -457,15 +518,111 @@ public class ResearchTaskServiceImpl extends ServiceImpl<ResearchTaskMapper, Res
         return task;
     }
 
+    private ResearchTask requireTaskForUpdate(String workspaceId, String taskId) {
+        ResearchTask task = mapper.findByIdAndWorkspaceForUpdate(taskId, workspaceId);
+        if (task == null) {
+            throw BusinessException.notFound("task not found");
+        }
+        return task;
+    }
+
+    /** 任务控制仅允许创建者或工作空间管理员。 */
+    private ResearchTask requireControllableTask(String workspaceId, String taskId, String userId) {
+        WorkspaceRole role = accessService.requireMember(workspaceId, userId);
+        ResearchTask task = requireTask(workspaceId, taskId);
+        if (!userId.equals(task.getCreatorId()) && !role.isAdminOrAbove()) {
+            throw BusinessException.forbidden("only task creator or workspace admin may control task");
+        }
+        return task;
+    }
+
+    private void releaseTaskSlot(String taskId, String workspaceId) {
+        slotTracker.releaseOnce(
+                taskId,
+                workspaceId,
+                permitId -> concurrencyService.release(workspaceId, permitId));
+    }
+
+    /** 在终态事务中插入可回放的标准 TASK_RESULT。 */
+    private StoredTaskEvent insertTerminalEvent(
+            String taskId,
+            String runId,
+            String status,
+            Map<String, Object> error) {
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("status", status);
+        data.put("error", error);
+        data.put("hasReport", false);
+        String payload;
+        try {
+            payload = objectMapper.writeValueAsString(data);
+        } catch (JsonProcessingException ex) {
+            throw new IllegalStateException("serialize terminal event failed", ex);
+        }
+
+        long firstEventNo = taskEventMapper.maxEventNo(taskId) + 1;
+        String timestamp = Instant.now().toString();
+        for (int attempt = 0; attempt < 5; attempt++) {
+            long eventNo = firstEventNo + attempt;
+            int inserted = taskEventMapper.insertIgnore(
+                    taskId,
+                    eventNo,
+                    runId,
+                    null,
+                    "TASK_RESULT",
+                    payload,
+                    parseTs(timestamp));
+            if (inserted > 0) {
+                Map<String, Object> body = new LinkedHashMap<>();
+                body.put("eventId", eventNo);
+                body.put("taskId", taskId);
+                body.put("runId", runId);
+                body.put("node", null);
+                body.put("type", "TASK_RESULT");
+                body.put("timestamp", timestamp);
+                body.put("data", data);
+                try {
+                    return new StoredTaskEvent(eventNo, objectMapper.writeValueAsString(body));
+                } catch (JsonProcessingException ex) {
+                    throw new IllegalStateException("serialize terminal event envelope failed", ex);
+                }
+            }
+        }
+        throw new IllegalStateException("unable to allocate terminal event number");
+    }
+
+    private void publishStoredEvent(String taskId, StoredTaskEvent event) {
+        if (event == null) {
+            return;
+        }
+        taskControlRedis.publishEvent(taskId, event.json());
+        sseHub.broadcastLocal(taskId, event.eventNo(), "TASK_RESULT", event.json());
+    }
+
     private void markFailedSync(String taskId, String workspaceId, String code, String message) {
+        markFailedSync(taskId, workspaceId, null, code, message);
+    }
+
+    private void markFailedSync(
+            String taskId, String workspaceId, String runId, String code, String message) {
         transactionTemplate.executeWithoutResult(tx -> {
-            advance(taskId, workspaceId, TaskStatus.RUNNING, TaskStatus.FAILED, 30, null);
+            ResearchTask row = mapper.findByIdAndWorkspaceForUpdate(taskId, workspaceId);
+            if (row == null || isTerminal(row.getStatus())) {
+                return;
+            }
+            try {
+                stateMachine.transition(TaskStatus.valueOf(row.getStatus()), TaskStatus.FAILED);
+            } catch (Exception ignored) {
+                // 初始化中断等异常也必须收敛到 FAILED
+            }
             mapper.updateTaskFinished(
-                    taskId, workspaceId, TaskStatus.FAILED.name(), null, code, truncate(message, 1024));
+                    taskId, workspaceId, TaskStatus.FAILED.name(),
+                    runId == null ? row.getCurrentRunId() : runId,
+                    code, truncate(message, 1024));
         });
     }
 
-    private void advance(
+    void advance(
             String taskId,
             String workspaceId,
             TaskStatus from,
@@ -473,7 +630,12 @@ public class ResearchTaskServiceImpl extends ServiceImpl<ResearchTaskMapper, Res
             int progress,
             String node) {
         stateMachine.transition(from, to);
-        mapper.updateStatus(taskId, workspaceId, to.name(), progress, node);
+        int updated = mapper.updateStatusIfCurrent(
+                taskId, workspaceId, from.name(), to.name(), progress, node);
+        if (updated != 1) {
+            throw BusinessException.conflict(
+                    "TASK_STATE_CHANGED", "task status changed while advancing");
+        }
     }
 
     private void insertEvents(String taskId, List<AgentEventDto> events) {
@@ -555,6 +717,12 @@ public class ResearchTaskServiceImpl extends ServiceImpl<ResearchTaskMapper, Res
         return value.length() <= max ? value : value.substring(0, max);
     }
 
+    private static boolean isTerminal(String status) {
+        return TaskStatus.COMPLETED.name().equalsIgnoreCase(status)
+                || TaskStatus.FAILED.name().equalsIgnoreCase(status)
+                || TaskStatus.CANCELLED.name().equalsIgnoreCase(status);
+    }
+
     private static String extractTitle(String markdown) {
         for (String line : markdown.split("\\R")) {
             String trimmed = line.trim();
@@ -563,5 +731,8 @@ public class ResearchTaskServiceImpl extends ServiceImpl<ResearchTaskMapper, Res
             }
         }
         return "InsightHub Report";
+    }
+
+    private record StoredTaskEvent(long eventNo, String json) {
     }
 }

@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from app.graph.events import make_event
+from app.graph.limits import claim_step
 from app.graph.state import ResearchState
 
 _KB_TYPES = {"knowledge_research", "kb_research", "knowledge"}
@@ -17,11 +18,12 @@ def dispatch_tasks(state: ResearchState) -> dict[str, Any]:
 
     有知识库时确保至少一条 knowledge_research；否则仅 web_research。
     """
+    step, limit_failure = claim_step(state, "dispatch_tasks")
+    if limit_failure is not None:
+        return limit_failure
     events = list(state.get("events") or [])
-    step = int(state.get("step_count") or 0) + 1
     task_id = state["task_id"]
     run_id = state["run_id"]
-    max_steps = int(state.get("max_steps") or 20)
     kb_ids = list(state.get("knowledge_base_ids") or [])
 
     delta: list[dict[str, Any]] = []
@@ -35,24 +37,6 @@ def dispatch_tasks(state: ResearchState) -> dict[str, Any]:
             data={"agent": "Supervisor"},
         )
     )
-
-    if step > max_steps:
-        delta.append(
-            make_event(
-                events=events + delta,
-                task_id=task_id,
-                run_id=run_id,
-                event_type="TASK_FAILED",
-                node="dispatch_tasks",
-                data={"code": "MAX_STEPS_EXCEEDED", "stepCount": step},
-            )
-        )
-        return {
-            "step_count": step,
-            "status": "FAILED",
-            "errors": [{"code": "MAX_STEPS_EXCEEDED", "message": f"step_count={step} > max_steps={max_steps}"}],
-            "events": delta,
-        }
 
     plan = state.get("plan") or {}
     tasks = list(plan.get("tasks") or [])

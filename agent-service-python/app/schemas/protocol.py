@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 class TaskConfig(BaseModel):
     """任务级执行配置。"""
 
-    max_steps: int = Field(default=20, alias="maxSteps")
+    max_steps: int = Field(default=20, ge=1, alias="maxSteps")
     max_parallelism: int = Field(default=3, alias="maxParallelism")
     require_plan_approval: bool = Field(default=False, alias="requirePlanApproval")
     enable_web_search: bool = Field(default=True, alias="enableWebSearch")

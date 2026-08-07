@@ -217,7 +217,7 @@ CREATE TABLE `research_task` (
   `clarified_query`    TEXT                   DEFAULT NULL COMMENT '澄清后的查询',
   `plan_json`          JSON                   DEFAULT NULL COMMENT '结构化研究计划 JSON',
   `plan_approved`      TINYINT                DEFAULT NULL COMMENT '计划是否已确认：1=是 0=否 NULL=未到审批',
-  `status`             VARCHAR(32)   NOT NULL DEFAULT 'CREATED' COMMENT '业务状态：CREATED/PLANNING/WAITING_APPROVAL/RUNNING/PAUSED/REVIEWING/GENERATING/COMPLETED/FAILED/CANCELLED',
+  `status`             VARCHAR(32)   NOT NULL DEFAULT 'CREATED' COMMENT '业务状态：CREATED/PLANNING/WAITING_APPROVAL/RUNNING/PAUSING/PAUSED/REVIEWING/GENERATING/COMPLETED/FAILED/CANCELLED',
   `current_node`       VARCHAR(64)            DEFAULT NULL COMMENT '当前执行节点名',
   `progress`           INT           NOT NULL DEFAULT 0 COMMENT '进度百分比 0-100',
   `config_json`        JSON                   DEFAULT NULL COMMENT '任务级配置：maxSteps/并行度/是否联网等',

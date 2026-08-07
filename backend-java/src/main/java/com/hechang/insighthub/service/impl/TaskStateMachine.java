@@ -24,8 +24,14 @@ public class TaskStateMachine {
                 TaskStatus.WAITING_APPROVAL, TaskStatus.RUNNING, TaskStatus.FAILED, TaskStatus.CANCELLED));
         transitions.put(TaskStatus.WAITING_APPROVAL, EnumSet.of(TaskStatus.PLANNING, TaskStatus.RUNNING));
         transitions.put(TaskStatus.RUNNING, EnumSet.of(
+                TaskStatus.PAUSING,
                 TaskStatus.PAUSED,
                 TaskStatus.REVIEWING,
+                TaskStatus.GENERATING,
+                TaskStatus.FAILED,
+                TaskStatus.CANCELLED));
+        transitions.put(TaskStatus.PAUSING, EnumSet.of(
+                TaskStatus.PAUSED,
                 TaskStatus.GENERATING,
                 TaskStatus.FAILED,
                 TaskStatus.CANCELLED));

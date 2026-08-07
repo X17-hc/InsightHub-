@@ -91,15 +91,8 @@ public class DemoDataSeed implements ApplicationRunner {
             log.info("Seeded user {}", username);
             return;
         }
-        // 演示账号固定密码：每次 seed 校正哈希，保证验收脚本可登录
-        // 非演示用户（其它 id）不会走此方法
-        existing.setPasswordHash(hash);
-        existing.setStatus(1);
-        existing.setUsername(username);
-        existing.setEmail(email);
-        existing.setDisplayName(displayName);
-        sysUserMapper.update(existing);
-        log.info("Refreshed demo password hash for user {}", username);
+        // 已存在账号可能已修改密码，启动过程不得覆盖用户凭据
+        log.info("Demo user {} already exists; credentials unchanged", username);
     }
 
     private void seedWorkspace(

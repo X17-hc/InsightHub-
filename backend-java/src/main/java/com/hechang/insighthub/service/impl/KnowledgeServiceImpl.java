@@ -115,7 +115,7 @@ public class KnowledgeServiceImpl extends ServiceImpl<KnowledgeBaseMapper, Knowl
     @Transactional
     public KnowledgeBaseResponse disable(String workspaceId, String kbId) {
         String userId = SecurityUtils.requireUserId();
-        accessService.requireMember(workspaceId, userId);
+        accessService.requireAdmin(workspaceId, userId);
         requireKb(workspaceId, kbId);
 
         mapper.updateStatus(kbId, workspaceId, STATUS_DISABLED);

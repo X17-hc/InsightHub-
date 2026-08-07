@@ -15,7 +15,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 public class DemoProperties {
 
     /** 是否在启动时写入演示账号与默认 Agent（生产应关闭）。 */
-    private boolean seedEnabled = true;
+    private boolean seedEnabled = false;
 
     private String userId = "user-demo";
     private String workspaceId = "workspace-demo";

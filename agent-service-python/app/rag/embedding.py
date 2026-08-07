@@ -80,8 +80,8 @@ def embed_texts(texts: Sequence[str]) -> list[list[float]]:
             raise RuntimeError(f"embedding count mismatch: {len(vectors)} != {len(cleaned)}")
         return vectors
     except Exception as exc:  # noqa: BLE001
-        logger.warning("embedding API failed, fallback to mock: %s", exc)
-        return [mock_embed(t, dim) for t in cleaned]
+        logger.exception("embedding API failed")
+        raise RuntimeError("embedding API failed") from exc
 
 
 def embed_query(text: str) -> list[float]:

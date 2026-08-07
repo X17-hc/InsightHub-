@@ -2,6 +2,7 @@ package com.hechang.insighthub.redis;
 
 import java.time.Duration;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Consumer;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -20,8 +21,8 @@ public class TaskSlotTracker {
     private static final Logger log = LoggerFactory.getLogger(TaskSlotTracker.class);
 
     private final StringRedisTemplate redisTemplate;
-    /** taskId -> workspaceId（本 JVM 缓存） */
-    private final ConcurrentHashMap<String, String> localHeld = new ConcurrentHashMap<>();
+    /** taskId -> 租约（本 JVM 缓存） */
+    private final ConcurrentHashMap<String, SlotLease> localHeld = new ConcurrentHashMap<>();
 
     public TaskSlotTracker(StringRedisTemplate redisTemplate) {
         this.redisTemplate = redisTemplate;
@@ -38,12 +39,13 @@ public class TaskSlotTracker {
      * @param workspaceId  工作空间
      * @param ttlSeconds   凭证 TTL（建议 timeout+600）
      */
-    public void markHeld(String taskId, String workspaceId, int ttlSeconds) {
-        localHeld.put(taskId, workspaceId);
+    public void markHeld(String taskId, String workspaceId, String permitId, int ttlSeconds) {
+        SlotLease lease = new SlotLease(workspaceId, permitId);
+        localHeld.put(taskId, lease);
         try {
             redisTemplate.opsForValue().set(
                     slotKey(taskId),
-                    workspaceId,
+                    lease.serialize(),
                     Duration.ofSeconds(Math.max(60, ttlSeconds)));
         } catch (Exception ex) {
             // 本 JVM 仍可 release；跨进程依赖 Redis 写成功
@@ -56,17 +58,19 @@ public class TaskSlotTracker {
      *
      * @return true 表示本次确实释放了
      */
-    public boolean releaseOnce(String taskId, String workspaceId, Runnable releaseAction) {
-        String local = localHeld.remove(taskId);
-        boolean redisHad = false;
+    public boolean releaseOnce(String taskId, String workspaceId, Consumer<String> releaseAction) {
+        SlotLease lease = localHeld.remove(taskId);
         try {
-            Boolean deleted = redisTemplate.delete(slotKey(taskId));
-            redisHad = Boolean.TRUE.equals(deleted);
+            String stored = redisTemplate.opsForValue().getAndDelete(slotKey(taskId));
+            if (stored != null) {
+                lease = SlotLease.parse(stored);
+            }
         } catch (Exception ex) {
             log.error("Redis slot delete failed taskId={}", taskId, ex);
         }
-        if (local != null || redisHad) {
-            releaseAction.run();
+        if (lease != null && (workspaceId == null || workspaceId.isBlank()
+                || workspaceId.equals(lease.workspaceId()))) {
+            releaseAction.accept(lease.permitId());
             return true;
         }
         return false;
@@ -75,7 +79,22 @@ public class TaskSlotTracker {
     /**
      * 兼容旧调用：无 workspace 时仅依赖本地 + Redis DELETE。
      */
-    public boolean releaseOnce(String taskId, Runnable releaseAction) {
+    public boolean releaseOnce(String taskId, Consumer<String> releaseAction) {
         return releaseOnce(taskId, "", releaseAction);
+    }
+
+    private record SlotLease(String workspaceId, String permitId) {
+
+        String serialize() {
+            return workspaceId + "\n" + permitId;
+        }
+
+        static SlotLease parse(String raw) {
+            int split = raw == null ? -1 : raw.indexOf('\n');
+            if (split <= 0 || split >= raw.length() - 1) {
+                return null;
+            }
+            return new SlotLease(raw.substring(0, split), raw.substring(split + 1));
+        }
     }
 }

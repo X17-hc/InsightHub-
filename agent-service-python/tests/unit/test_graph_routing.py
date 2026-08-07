@@ -27,3 +27,44 @@ def test_three_agent_pipeline_produces_markdown():
     assert "PLAN_CREATED" in types
     assert "NODE_COMPLETED" in types
     assert "TASK_COMPLETED" in types
+
+
+def test_max_steps_stops_before_research_and_writer():
+    req = AgentTaskRequest.model_validate(
+        {
+            "taskId": "task-max-steps",
+            "workspaceId": "workspace-demo",
+            "userId": "user-demo",
+            "query": "验证最大步骤限制",
+            "config": {"maxSteps": 1, "enableWebSearch": False},
+        }
+    )
+
+    result = run_research_task(req, trace_id="trace-max-steps")
+
+    assert result.status == "FAILED"
+    assert result.error is not None
+    assert result.error.code == "MAX_STEPS_EXCEEDED"
+    assert result.report_markdown is None
+    assert all(event.node not in {"web_research", "write_report"} for event in result.events)
+
+
+def test_max_steps_is_enforced_after_supervisor():
+    req = AgentTaskRequest.model_validate(
+        {
+            "taskId": "task-max-steps-after-supervisor",
+            "workspaceId": "workspace-demo",
+            "userId": "user-demo",
+            "query": "验证后续节点步骤限制",
+            "config": {"maxSteps": 2, "enableWebSearch": False},
+        }
+    )
+
+    result = run_research_task(req, trace_id="trace-max-steps-2")
+
+    assert result.status == "FAILED"
+    assert result.error is not None
+    assert result.error.code == "MAX_STEPS_EXCEEDED"
+    assert result.report_markdown is None
+    assert any(event.node == "knowledge_research" for event in result.events)
+    assert all(event.node not in {"web_research", "write_report"} for event in result.events)

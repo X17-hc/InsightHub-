@@ -129,13 +129,20 @@ public class WorkspaceServiceImpl extends ServiceImpl<WorkspaceMapper, Workspace
     @Transactional
     public void removeMember(String workspaceId, String targetUserId) {
         String actorId = SecurityUtils.requireUserId();
-        accessService.requireAdmin(workspaceId, actorId);
+        WorkspaceRole actorRole = accessService.requireAdmin(workspaceId, actorId);
+        Workspace workspace = getById(workspaceId);
+        if (workspace != null && targetUserId.equals(workspace.getOwnerId())) {
+            throw BusinessException.conflict("PRIMARY_OWNER", "primary owner cannot be removed");
+        }
         String role = memberMapper.selectRole(workspaceId, targetUserId);
         if (role == null) {
             throw BusinessException.notFound("member not found");
         }
         if ("OWNER".equals(role) && memberMapper.countOwners(workspaceId) <= 1) {
             throw BusinessException.conflict("LAST_OWNER", "cannot remove the last owner");
+        }
+        if ("OWNER".equals(role) && actorRole != WorkspaceRole.OWNER) {
+            throw BusinessException.forbidden("only owner can remove another owner");
         }
         memberMapper.deleteByWorkspaceAndUser(workspaceId, targetUserId);
     }

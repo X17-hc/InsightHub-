@@ -50,6 +50,7 @@ mvn -DskipTests spring-boot:run
 | 配置 | 说明 |
 | --- | --- |
 | `insighthub.jwt.secret` / `JWT_SECRET` | ≥32 字节，短密钥启动失败 |
+| `insighthub.agent.internal-token` / `AGENT_INTERNAL_TOKEN` | Java/Python 共用的内部 API 密钥，不得为空 |
 | `insighthub.demo.seed-enabled` / `DEMO_SEED_ENABLED` | 演示账号 seed，生产设 `false` |
 | `insighthub.docs.public-access` / `DOCS_PUBLIC_ACCESS` | Knife4j 是否匿名可访问 |
 | `insighthub.agent.base-url` | Python Agent 地址 |

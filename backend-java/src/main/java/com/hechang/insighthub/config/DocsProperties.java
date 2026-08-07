@@ -11,7 +11,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 public class DocsProperties {
 
     /** true 时匿名可访问 /doc.html 与 OpenAPI；生产建议 false。 */
-    private boolean publicAccess = true;
+    private boolean publicAccess = false;
 
 
 }

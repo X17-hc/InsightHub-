@@ -34,11 +34,16 @@ public class AppConfig {
      */
     @Bean
     public WebClient agentWebClient(AgentProperties props) {
+        if (props.getInternalToken() == null || props.getInternalToken().isBlank()) {
+            throw new IllegalStateException(
+                    "insighthub.agent.internal-token must be configured; set AGENT_INTERNAL_TOKEN");
+        }
         HttpClient httpClient = HttpClient.create()
                 .responseTimeout(Duration.ofMillis(props.getReadTimeoutMs()))
                 .option(io.netty.channel.ChannelOption.CONNECT_TIMEOUT_MILLIS, props.getConnectTimeoutMs());
         return WebClient.builder()
                 .baseUrl(props.getBaseUrl())
+                .defaultHeader("X-Internal-Token", props.getInternalToken())
                 .clientConnector(new ReactorClientHttpConnector(httpClient))
                 .build();
     }

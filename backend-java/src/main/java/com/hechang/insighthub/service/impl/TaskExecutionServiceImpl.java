@@ -5,21 +5,23 @@ import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.hechang.insighthub.config.TaskProperties;
 import com.hechang.insighthub.integration.AgentStreamClient;
 import com.hechang.insighthub.mapper.CitationMapper;
@@ -57,6 +59,7 @@ public class TaskExecutionServiceImpl implements TaskExecutionService {
     private final TaskStreamLease streamLease;
     private final ObjectMapper objectMapper;
     private final TaskProperties taskProperties;
+    private final TransactionTemplate transactionTemplate;
 
     public TaskExecutionServiceImpl(
             AgentStreamClient agentStreamClient,
@@ -71,7 +74,8 @@ public class TaskExecutionServiceImpl implements TaskExecutionService {
             TaskEventSseHub sseHub,
             TaskStreamLease streamLease,
             ObjectMapper objectMapper,
-            TaskProperties taskProperties) {
+            TaskProperties taskProperties,
+            TransactionTemplate transactionTemplate) {
         this.agentStreamClient = agentStreamClient;
         this.researchTaskMapper = researchTaskMapper;
         this.taskEventMapper = taskEventMapper;
@@ -85,6 +89,7 @@ public class TaskExecutionServiceImpl implements TaskExecutionService {
         this.streamLease = streamLease;
         this.objectMapper = objectMapper;
         this.taskProperties = taskProperties;
+        this.transactionTemplate = transactionTemplate;
     }
 
     @Override
@@ -96,7 +101,7 @@ public class TaskExecutionServiceImpl implements TaskExecutionService {
             String query,
             String traceId,
             boolean resume) {
-        long generation = streamLease.acquire(taskId);
+        String generation = streamLease.acquire(taskId);
         AtomicInteger badLines = new AtomicInteger();
         try {
             int timeout = taskProperties.getDefaultTimeoutSeconds();
@@ -139,7 +144,10 @@ public class TaskExecutionServiceImpl implements TaskExecutionService {
             streamLease.release(taskId, generation);
             ResearchTask row = researchTaskMapper.findByIdAndWorkspace(taskId, workspaceId);
             if (row != null && isTerminal(row.getStatus())) {
-                slotTracker.releaseOnce(taskId, workspaceId, () -> concurrencyService.release(workspaceId));
+                slotTracker.releaseOnce(
+                        taskId,
+                        workspaceId,
+                        permitId -> concurrencyService.release(workspaceId, permitId));
                 sseHub.completeTask(taskId);
             }
         }
@@ -150,7 +158,7 @@ public class TaskExecutionServiceImpl implements TaskExecutionService {
             String workspaceId,
             JsonNode node,
             AtomicInteger badLines,
-            long generation) {
+            String generation) {
         if (!streamLease.isCurrent(taskId, generation)) {
             return;
         }
@@ -159,8 +167,21 @@ public class TaskExecutionServiceImpl implements TaskExecutionService {
         }
         String type = text(node, "type");
         if ("TASK_RESULT".equals(type)) {
-            finalizeResult(taskId, workspaceId, node);
-            publishTaskResult(taskId, node);
+            AtomicReference<PublishedTaskResult> published = new AtomicReference<>();
+            transactionTemplate.executeWithoutResult(tx -> {
+                if (finalizeResult(taskId, workspaceId, node)) {
+                    published.set(persistTaskResult(taskId, node));
+                }
+            });
+            if (published.get() != null) {
+                if ("PAUSED".equalsIgnoreCase(text(node, "status"))) {
+                    slotTracker.releaseOnce(
+                            taskId,
+                            workspaceId,
+                            permitId -> concurrencyService.release(workspaceId, permitId));
+                }
+                publishTaskResult(taskId, published.get());
+            }
             return;
         }
         AgentEventDto event = toEventDto(node);
@@ -185,14 +206,13 @@ public class TaskExecutionServiceImpl implements TaskExecutionService {
         applySideEffects(taskId, workspaceId, event);
     }
 
-    /** 将 TASK_RESULT 分配 eventNo 后落库并推送 SSE（含 PAUSED） */
-    private void publishTaskResult(String taskId, JsonNode node) {
+    /** 将 TASK_RESULT 规范化后落库，实时与回放使用同一种结构。 */
+    private PublishedTaskResult persistTaskResult(String taskId, JsonNode node) {
         try {
-            long eventNo = taskEventMapper.maxEventNo(taskId) + 1;
+            long firstEventNo = taskEventMapper.maxEventNo(taskId) + 1;
             String status = text(node, "status");
             String runId = text(node, "runId");
             AgentEventDto dto = new AgentEventDto();
-            dto.setEventId(eventNo);
             dto.setTaskId(taskId);
             dto.setRunId(runId);
             dto.setType("TASK_RESULT");
@@ -207,13 +227,31 @@ public class TaskExecutionServiceImpl implements TaskExecutionService {
                     && !node.get("reportMarkdown").isNull()
                     && !node.get("reportMarkdown").asText("").isBlank());
             dto.setData(data);
-            insertEventIgnoreDuplicate(taskId, eventNo, dto);
+            for (int attempt = 0; attempt < 5; attempt++) {
+                long eventNo = firstEventNo + attempt;
+                dto.setEventId(eventNo);
+                if (insertEventIgnoreDuplicate(taskId, eventNo, dto) > 0) {
+                    Map<String, Object> body = new LinkedHashMap<>();
+                    body.put("eventId", eventNo);
+                    body.put("taskId", taskId);
+                    body.put("runId", runId);
+                    body.put("node", null);
+                    body.put("type", "TASK_RESULT");
+                    body.put("timestamp", dto.getTimestamp());
+                    body.put("data", data);
+                    return new PublishedTaskResult(eventNo, objectMapper.writeValueAsString(body));
+                }
+            }
+            throw new IllegalStateException("unable to allocate TASK_RESULT event number");
+        } catch (Exception ex) {
+            throw new IllegalStateException("persist TASK_RESULT failed", ex);
+        }
+    }
 
-            ObjectNode out = node.deepCopy();
-            out.put("eventId", eventNo);
-            String json = objectMapper.writeValueAsString(out);
-            taskControlRedis.publishEvent(taskId, json);
-            sseHub.broadcastLocal(taskId, eventNo, "TASK_RESULT", json);
+    private void publishTaskResult(String taskId, PublishedTaskResult result) {
+        try {
+            taskControlRedis.publishEvent(taskId, result.json());
+            sseHub.broadcastLocal(taskId, result.eventNo(), "TASK_RESULT", result.json());
         } catch (Exception ex) {
             log.warn("publish TASK_RESULT failed taskId={}", taskId, ex);
         }
@@ -227,29 +265,35 @@ public class TaskExecutionServiceImpl implements TaskExecutionService {
         if (current == null || isTerminal(current)) {
             return;
         }
-        boolean paused = "PAUSED".equalsIgnoreCase(current);
+        boolean paused = "PAUSED".equalsIgnoreCase(current) || "PAUSING".equalsIgnoreCase(current);
         switch (type) {
             case "PLAN_CREATED" -> {
                 if (!paused && "RUNNING".equalsIgnoreCase(current)) {
-                    researchTaskMapper.updateStatus(taskId, workspaceId, TaskStatus.RUNNING.name(), 20, node);
+                    researchTaskMapper.updateStatusIfCurrent(
+                            taskId, workspaceId, TaskStatus.RUNNING.name(),
+                            TaskStatus.RUNNING.name(), 20, node);
                 }
             }
             case "NODE_STARTED", "NODE_COMPLETED" -> {
                 if (!paused && "RUNNING".equalsIgnoreCase(current)) {
-                    researchTaskMapper.updateStatus(taskId, workspaceId, TaskStatus.RUNNING.name(), null, node);
+                    researchTaskMapper.updateStatusIfCurrent(
+                            taskId, workspaceId, TaskStatus.RUNNING.name(),
+                            TaskStatus.RUNNING.name(), null, node);
                 }
             }
             case "TASK_PAUSED" -> {
-                if ("RUNNING".equalsIgnoreCase(current)) {
-                    stateMachine.transition(TaskStatus.RUNNING, TaskStatus.PAUSED);
-                    researchTaskMapper.updateStatus(taskId, workspaceId, TaskStatus.PAUSED.name(), null, node);
+                if ("RUNNING".equalsIgnoreCase(current) || "PAUSING".equalsIgnoreCase(current)) {
+                    stateMachine.transition(TaskStatus.valueOf(current), TaskStatus.PAUSED);
+                    researchTaskMapper.updateStatusIfCurrent(
+                            taskId, workspaceId, current, TaskStatus.PAUSED.name(), null, node);
                 }
             }
             case "TASK_COMPLETED" -> {
-                if ("RUNNING".equalsIgnoreCase(current)) {
-                    stateMachine.transition(TaskStatus.RUNNING, TaskStatus.GENERATING);
-                    researchTaskMapper.updateStatus(
-                            taskId, workspaceId, TaskStatus.GENERATING.name(), 80, "write_report");
+                if ("RUNNING".equalsIgnoreCase(current) || "PAUSING".equalsIgnoreCase(current)) {
+                    stateMachine.transition(TaskStatus.valueOf(current), TaskStatus.GENERATING);
+                    researchTaskMapper.updateStatusIfCurrent(
+                            taskId, workspaceId, current,
+                            TaskStatus.GENERATING.name(), 80, "write_report");
                 }
             }
             case "TASK_FAILED" -> {
@@ -269,7 +313,7 @@ public class TaskExecutionServiceImpl implements TaskExecutionService {
         }
     }
 
-    private void finalizeResult(String taskId, String workspaceId, JsonNode node) {
+    private boolean finalizeResult(String taskId, String workspaceId, JsonNode node) {
         String status = text(node, "status");
         String runId = text(node, "runId");
         String report = text(node, "reportMarkdown");
@@ -277,67 +321,57 @@ public class TaskExecutionServiceImpl implements TaskExecutionService {
         String errCode = err != null && !err.isNull() ? text(err, "code") : null;
         String errMsg = err != null && !err.isNull() ? text(err, "message") : null;
 
-        ResearchTask row = researchTaskMapper.findByIdAndWorkspace(taskId, workspaceId);
+        ResearchTask row = researchTaskMapper.findByIdAndWorkspaceForUpdate(taskId, workspaceId);
         if (row == null) {
-            return;
+            return false;
         }
         String currentStatus = row.getStatus();
-        if (isTerminal(currentStatus)
-                && !"CANCELLED".equalsIgnoreCase(status)
-                && !currentStatus.equalsIgnoreCase(status)) {
+        if (isTerminal(currentStatus)) {
             log.info("ignore late TASK_RESULT status={} current={} taskId={}", status, currentStatus, taskId);
-            return;
+            return false;
         }
 
         if ("PAUSED".equalsIgnoreCase(status)) {
-            if ("RUNNING".equalsIgnoreCase(currentStatus)) {
-                stateMachine.transition(TaskStatus.RUNNING, TaskStatus.PAUSED);
+            if ("RUNNING".equalsIgnoreCase(currentStatus) || "PAUSING".equalsIgnoreCase(currentStatus)) {
+                stateMachine.transition(TaskStatus.valueOf(currentStatus), TaskStatus.PAUSED);
                 researchTaskMapper.updateStatus(taskId, workspaceId, TaskStatus.PAUSED.name(), null, null);
             }
-            return;
+            return true;
         }
         if ("COMPLETED".equalsIgnoreCase(status)) {
-            if (isTerminal(currentStatus)) {
-                return;
-            }
             TaskStatus cur = TaskStatus.valueOf(currentStatus);
             if (cur == TaskStatus.PAUSED) {
                 log.info("ignore COMPLETED while PAUSED taskId={}", taskId);
-                return;
+                return false;
             }
-            if (cur == TaskStatus.RUNNING) {
-                stateMachine.transition(TaskStatus.RUNNING, TaskStatus.GENERATING);
+            if (cur == TaskStatus.RUNNING || cur == TaskStatus.PAUSING) {
+                stateMachine.transition(cur, TaskStatus.GENERATING);
                 researchTaskMapper.updateStatus(
                         taskId, workspaceId, TaskStatus.GENERATING.name(), 80, "write_report");
                 cur = TaskStatus.GENERATING;
             }
             if (cur == TaskStatus.GENERATING) {
+                if (report == null || report.isBlank()) {
+                    throw new IllegalStateException("completed task has no report");
+                }
+                String reportId = "report-" + UUID.randomUUID().toString().replace("-", "").substring(0, 16);
+                insertReport(reportId, taskId, workspaceId, report, extractTitle(report));
+                persistCitations(reportId, taskId, node.get("citations"));
                 stateMachine.transition(TaskStatus.GENERATING, TaskStatus.COMPLETED);
                 researchTaskMapper.updateTaskFinished(
                         taskId, workspaceId, TaskStatus.COMPLETED.name(), runId, null, null);
-                if (report != null && !report.isBlank()) {
-                    try {
-                        String reportId = "report-" + UUID.randomUUID().toString().replace("-", "").substring(0, 16);
-                        insertReport(reportId, taskId, workspaceId, report, extractTitle(report));
-                        persistCitations(reportId, taskId, node.get("citations"));
-                    } catch (Exception ex) {
-                        log.error("report persist failed taskId={}", taskId, ex);
-                        researchTaskMapper.updateTaskFinished(
-                                taskId, workspaceId, TaskStatus.COMPLETED.name(), runId,
-                                "REPORT_PERSIST_FAILED", truncate(ex.getMessage(), 1024));
-                    }
-                }
             }
-            return;
+            return true;
         }
         if ("CANCELLED".equalsIgnoreCase(status)) {
             forceStatus(taskId, workspaceId, TaskStatus.CANCELLED, runId, errCode, errMsg);
-            return;
+            return true;
         }
         if ("CANCELLED".equalsIgnoreCase(currentStatus) || "COMPLETED".equalsIgnoreCase(currentStatus)) {
-            return;
+            return false;
         }
         forceStatus(taskId, workspaceId, TaskStatus.FAILED, runId, errCode, errMsg);
+        return true;
     }
 
     private void forceStatus(
@@ -347,40 +381,34 @@ public class TaskExecutionServiceImpl implements TaskExecutionService {
             String runId,
             String errCode,
             String errMsg) {
-        ResearchTask row = researchTaskMapper.findByIdAndWorkspace(taskId, workspaceId);
-        if (row == null) {
-            return;
-        }
-        if (isTerminal(row.getStatus()) && to != TaskStatus.CANCELLED) {
-            return;
-        }
-        try {
-            TaskStatus from = TaskStatus.valueOf(row.getStatus());
-            if (from != to) {
-                if (to == TaskStatus.CANCELLED) {
-                    if (from == TaskStatus.COMPLETED) {
-                        return;
-                    }
-                    if (from != TaskStatus.CANCELLED) {
+        transactionTemplate.executeWithoutResult(tx -> {
+            ResearchTask row = researchTaskMapper.findByIdAndWorkspaceForUpdate(taskId, workspaceId);
+            if (row == null || isTerminal(row.getStatus())) {
+                return;
+            }
+            try {
+                TaskStatus from = TaskStatus.valueOf(row.getStatus());
+                if (from != to) {
+                    if (to == TaskStatus.CANCELLED) {
                         try {
                             stateMachine.transition(from, TaskStatus.CANCELLED);
                         } catch (Exception ignored) {
                             // 强制取消
                         }
-                    }
-                } else if (to == TaskStatus.FAILED) {
-                    try {
-                        stateMachine.transition(from, TaskStatus.FAILED);
-                    } catch (Exception ignored) {
-                        // 强制失败
+                    } else if (to == TaskStatus.FAILED) {
+                        try {
+                            stateMachine.transition(from, TaskStatus.FAILED);
+                        } catch (Exception ignored) {
+                            // 强制失败
+                        }
                     }
                 }
+            } catch (Exception ignored) {
+                // 非法历史状态仍允许收敛到终态
             }
-        } catch (Exception ignored) {
-            // ignore
-        }
-        researchTaskMapper.updateTaskFinished(
-                taskId, workspaceId, to.name(), runId, errCode, truncate(errMsg, 1024));
+            researchTaskMapper.updateTaskFinished(
+                    taskId, workspaceId, to.name(), runId, errCode, truncate(errMsg, 1024));
+        });
     }
 
     private void markFailed(
@@ -389,7 +417,7 @@ public class TaskExecutionServiceImpl implements TaskExecutionService {
     }
 
     /** 插入单条事件；uk 冲突时忽略（at-least-once 去重） */
-    private void insertEventIgnoreDuplicate(String taskId, long eventNo, AgentEventDto event) {
+    private int insertEventIgnoreDuplicate(String taskId, long eventNo, AgentEventDto event) {
         String payload;
         try {
             Map<String, Object> data = event.getData() == null ? Map.of() : event.getData();
@@ -397,7 +425,7 @@ public class TaskExecutionServiceImpl implements TaskExecutionService {
         } catch (JsonProcessingException e) {
             payload = "{}";
         }
-        taskEventMapper.insertIgnore(
+        return taskEventMapper.insertIgnore(
                 taskId,
                 eventNo,
                 event.getRunId(),
@@ -536,5 +564,8 @@ public class TaskExecutionServiceImpl implements TaskExecutionService {
             citation.setVerified(c.has("verified") && c.get("verified").asBoolean(false) ? 1 : 0);
             citationMapper.insert(citation);
         }
+    }
+
+    private record PublishedTaskResult(long eventNo, String json) {
     }
 }

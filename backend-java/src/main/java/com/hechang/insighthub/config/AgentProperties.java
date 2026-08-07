@@ -23,4 +23,7 @@ public class AgentProperties {
     /** 读取超时（毫秒），长任务需放宽 */
     private int readTimeoutMs = 300000;
 
-    }
+    /** 调用 Python /internal/v1 接口的共享密钥 */
+    private String internalToken = "";
+
+}

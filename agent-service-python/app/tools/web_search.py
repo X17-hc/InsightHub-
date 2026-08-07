@@ -9,7 +9,11 @@ import httpx
 from app.core.config import get_settings
 
 
-def search_web(query: str, max_results: int = 5) -> list[dict[str, Any]]:
+def search_web(
+    query: str,
+    max_results: int = 5,
+    timeout_seconds: float = 30.0,
+) -> list[dict[str, Any]]:
     """
     执行网页搜索。
 
@@ -31,7 +35,9 @@ def search_web(query: str, max_results: int = 5) -> list[dict[str, Any]]:
         "max_results": max_results,
         "include_answer": False,
     }
-    with httpx.Client(timeout=30.0) as client:
+    if timeout_seconds <= 0:
+        raise TimeoutError("agent task timed out")
+    with httpx.Client(timeout=timeout_seconds) as client:
         resp = client.post("https://api.tavily.com/search", json=payload)
         resp.raise_for_status()
         data = resp.json()

@@ -38,6 +38,7 @@ public class KnowledgeIngestClient {
                 .option(io.netty.channel.ChannelOption.CONNECT_TIMEOUT_MILLIS, CONNECT_TIMEOUT_MS);
         this.webClient = WebClient.builder()
                 .baseUrl(agentProperties.getBaseUrl())
+                .defaultHeader("X-Internal-Token", agentProperties.getInternalToken())
                 .clientConnector(new ReactorClientHttpConnector(httpClient))
                 .build();
     }

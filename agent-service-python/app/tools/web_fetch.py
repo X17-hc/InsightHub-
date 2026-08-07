@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import logging
+import ipaddress
 import re
+import socket
 from html import unescape
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse, urlunparse
 
 import httpx
 
@@ -14,6 +16,62 @@ logger = logging.getLogger(__name__)
 
 _MAX_BYTES = 512_000
 _TIMEOUT = 12.0
+_MAX_REDIRECTS = 3
+
+
+def _prepare_public_request(url: str) -> tuple[str, str, str] | None:
+    """校验公网目标，并返回固定 IP 的请求 URL、Host 与 SNI。"""
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        return None
+    if parsed.username or parsed.password:
+        return None
+    host = parsed.hostname.rstrip(".").lower()
+    if host == "localhost" or host.endswith(".localhost") or host.endswith(".local"):
+        return None
+    try:
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+        addresses = [
+            item[4][0]
+            for item in socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+        ]
+    except (OSError, UnicodeError, ValueError):
+        return None
+    if not addresses:
+        return None
+
+    public_addresses: list[ipaddress.IPv4Address | ipaddress.IPv6Address] = []
+    try:
+        for address in addresses:
+            parsed_address = ipaddress.ip_address(address.split("%", 1)[0])
+            if not parsed_address.is_global:
+                return None
+            if parsed_address not in public_addresses:
+                public_addresses.append(parsed_address)
+    except ValueError:
+        return None
+
+    selected = public_addresses[0]
+    selected_host = f"[{selected.compressed}]" if selected.version == 6 else selected.compressed
+    default_port = 443 if parsed.scheme == "https" else 80
+    target_netloc = selected_host if port == default_port else f"{selected_host}:{port}"
+
+    try:
+        original_ip = ipaddress.ip_address(host)
+        host_name = f"[{original_ip.compressed}]" if original_ip.version == 6 else original_ip.compressed
+    except ValueError:
+        try:
+            host_name = host.encode("idna").decode("ascii")
+        except UnicodeError:
+            return None
+    host_header = host_name if port == default_port else f"{host_name}:{port}"
+    request_url = urlunparse(parsed._replace(netloc=target_netloc, fragment=""))
+    return request_url, host_header, host_name.strip("[]")
+
+
+def _is_public_http_url(url: str) -> bool:
+    """校验 URL 及其 DNS 结果均为公网地址。"""
+    return _prepare_public_request(url) is not None
 
 
 def _strip_html(html: str) -> str:
@@ -26,7 +84,7 @@ def _strip_html(html: str) -> str:
     return text[:8000]
 
 
-def fetch_url(url: str) -> dict[str, Any] | None:
+def fetch_url(url: str, timeout_seconds: float = _TIMEOUT) -> dict[str, Any] | None:
     """
     抓取并抽取正文。
 
@@ -34,18 +92,48 @@ def fetch_url(url: str) -> dict[str, Any] | None:
         {title, url, snippet, sourceType=WEB}；失败返回 None（不抛垮调用方）。
     """
     try:
-        parsed = urlparse(url)
-        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-            return None
-        with httpx.Client(timeout=_TIMEOUT, follow_redirects=True) as client:
-            resp = client.get(url, headers={"User-Agent": "InsightHubBot/0.1"})
-            if resp.status_code >= 400:
+        if timeout_seconds <= 0:
+            raise TimeoutError("agent task timed out")
+        current_url = url
+        html = ""
+        with httpx.Client(timeout=timeout_seconds, follow_redirects=False, trust_env=False) as client:
+            for redirect_count in range(_MAX_REDIRECTS + 1):
+                prepared = _prepare_public_request(current_url)
+                if prepared is None:
+                    return None
+                request_url, host_header, sni_hostname = prepared
+                with client.stream(
+                    "GET",
+                    request_url,
+                    headers={"Host": host_header, "User-Agent": "InsightHubBot/0.1"},
+                    extensions={"sni_hostname": sni_hostname},
+                ) as resp:
+                    if resp.status_code in {301, 302, 303, 307, 308}:
+                        location = resp.headers.get("location")
+                        if not location or redirect_count >= _MAX_REDIRECTS:
+                            return None
+                        current_url = urljoin(current_url, location)
+                        continue
+                    if resp.status_code >= 400:
+                        return None
+                    ctype = (resp.headers.get("content-type") or "").lower()
+                    if "html" not in ctype and "text" not in ctype:
+                        return None
+                    declared = resp.headers.get("content-length")
+                    if declared and int(declared) > _MAX_BYTES:
+                        return None
+                    chunks: list[bytes] = []
+                    size = 0
+                    for chunk in resp.iter_bytes():
+                        size += len(chunk)
+                        if size > _MAX_BYTES:
+                            return None
+                        chunks.append(chunk)
+                    raw = b"".join(chunks)
+                    html = raw.decode(resp.encoding or "utf-8", errors="replace")
+                    break
+            else:
                 return None
-            raw = resp.content[:_MAX_BYTES]
-            ctype = (resp.headers.get("content-type") or "").lower()
-            if "html" not in ctype and "text" not in ctype:
-                return None
-            html = raw.decode(resp.encoding or "utf-8", errors="replace")
         title_m = re.search(r"(?is)<title[^>]*>(.*?)</title>", html)
         title = _strip_html(title_m.group(1)) if title_m else url
         body = _strip_html(html)
@@ -53,7 +141,7 @@ def fetch_url(url: str) -> dict[str, Any] | None:
             return None
         return {
             "title": title[:200],
-            "url": url,
+            "url": current_url,
             "snippet": body[:600],
             "sourceType": "WEB",
         }

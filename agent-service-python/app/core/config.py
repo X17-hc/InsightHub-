@@ -30,6 +30,14 @@ class Settings(BaseSettings):
     # Redis：任务控制字；不可用时降级进程内内存
     redis_url: str = "redis://127.0.0.1:6379/0"
     default_timeout_seconds: int = 300
+    # 内部 API 共享密钥；为空时内部接口拒绝服务
+    agent_internal_token: str = ""
+    # 单任务执行租约等待时间，防止暂停确认与恢复请求的窄竞态
+    execution_lease_wait_seconds: int = 5
+
+    # LangGraph Checkpoint：生产默认持久化到 PostgreSQL；测试可显式设为 memory
+    checkpoint_backend: str = "postgres"
+    checkpoint_pool_max_size: int = 10
 
     # PostgreSQL / PGVector（知识库片段）
     postgres_host: str = "127.0.0.1"
@@ -37,6 +45,11 @@ class Settings(BaseSettings):
     postgres_db: str = "insighthub_vector"
     postgres_user: str = "insighthub"
     postgres_password: str = "123456"
+    postgres_connect_timeout_seconds: int = 5
+    postgres_statement_timeout_ms: int = 30000
+
+    # Python 只允许读取该目录内由 Java 上传的文件；相对路径按仓库根目录解析
+    upload_root_dir: str = "backend-java/data/uploads"
 
     # Embedding：维度固定 1536；mock 时用确定性伪向量
     embedding_mock: bool = False

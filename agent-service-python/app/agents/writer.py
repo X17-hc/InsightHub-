@@ -9,6 +9,8 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from app.core.config import get_settings
 from app.core.llm import get_chat_model
 from app.graph.events import make_event
+from app.graph.deadline import remaining_seconds
+from app.graph.limits import claim_step
 from app.graph.state import ResearchState
 
 _WRITER_SYSTEM = """你是技术研究报告撰写助手。
@@ -43,8 +45,10 @@ def _render_fallback(state: ResearchState) -> str:
 def write_report(state: ResearchState) -> dict[str, Any]:
     """基于 evidence 生成 Markdown 报告。"""
     settings = get_settings()
+    step, limit_failure = claim_step(state, "write_report")
+    if limit_failure is not None:
+        return limit_failure
     events = list(state.get("events") or [])
-    step = int(state.get("step_count") or 0) + 1
     task_id = state["task_id"]
     run_id = state["run_id"]
     delta: list[dict[str, Any]] = []
@@ -64,7 +68,7 @@ def write_report(state: ResearchState) -> dict[str, Any]:
     if settings.agent_mock_llm or not settings.deepseek_api_key:
         report = _render_fallback(state)
     else:
-        model = get_chat_model(temperature=0.3)
+        model = get_chat_model(temperature=0.3, timeout_seconds=remaining_seconds(state, 60))
         payload = {
             "query": state.get("clarified_query") or state.get("user_query"),
             "plan": state.get("plan"),
@@ -117,6 +121,8 @@ def write_report(state: ResearchState) -> dict[str, Any]:
 
 def finalize(state: ResearchState) -> dict[str, Any]:
     """收尾节点：标记任务完成。"""
+    if state.get("status") == "FAILED":
+        return {}
     events = list(state.get("events") or [])
     delta = [
         make_event(

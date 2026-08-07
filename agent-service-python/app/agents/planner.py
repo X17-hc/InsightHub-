@@ -11,6 +11,8 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from app.core.config import get_settings
 from app.core.llm import get_chat_model
 from app.graph.events import make_event
+from app.graph.deadline import remaining_seconds
+from app.graph.limits import claim_step
 from app.graph.state import ResearchState
 
 _PLANNER_SYSTEM = """你是 InsightHub 的 Planner Agent。
@@ -82,8 +84,10 @@ def create_plan(state: ResearchState) -> dict[str, Any]:
         状态增量（plan / events / step_count 等）。
     """
     settings = get_settings()
+    step, limit_failure = claim_step(state, "create_plan")
+    if limit_failure is not None:
+        return limit_failure
     events = list(state.get("events") or [])
-    step = int(state.get("step_count") or 0) + 1
     task_id = state["task_id"]
     run_id = state["run_id"]
 
@@ -101,7 +105,7 @@ def create_plan(state: ResearchState) -> dict[str, Any]:
     if settings.agent_mock_llm or not settings.deepseek_api_key:
         plan = _mock_plan(state["user_query"], has_kb=has_kb)
     else:
-        model = get_chat_model(temperature=0.1)
+        model = get_chat_model(temperature=0.1, timeout_seconds=remaining_seconds(state, 60))
         hint = f"\n已绑定知识库: {state.get('knowledge_base_ids')}" if has_kb else "\n未绑定知识库"
         resp = model.invoke(
             [
