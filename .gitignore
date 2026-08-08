@@ -30,3 +30,4 @@ deploy/runtime/
 *.log
 *.sqlite3
 my_knowledge_db/
+agent-service-python/node_modules

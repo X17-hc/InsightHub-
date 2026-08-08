@@ -22,7 +22,9 @@ import com.hechang.insighthub.model.dto.knowledge.CitationResponse;
 import com.hechang.insighthub.model.dto.task.AgentTaskResponseDto;
 import com.hechang.insighthub.model.dto.task.CreateResearchTaskRequest;
 import com.hechang.insighthub.model.dto.task.CreateTaskAcceptedResponse;
+import com.hechang.insighthub.model.dto.task.ReportResponse;
 import com.hechang.insighthub.model.dto.task.TaskControlResponse;
+import com.hechang.insighthub.model.dto.task.TaskEventResponse;
 import com.hechang.insighthub.model.dto.task.TaskSummaryResponse;
 import com.hechang.insighthub.service.ResearchTaskService;
 
@@ -78,12 +80,32 @@ public class ResearchTaskController {
         return ResultUtils.success(researchTaskService.get(workspaceId, taskId));
     }
 
+    @GetMapping("/{taskId}/report")
+    @Operation(summary = "Get the latest generated report")
+    public BaseResponse<ReportResponse> report(
+            @PathVariable String workspaceId,
+            @PathVariable String taskId) {
+        return ResultUtils.success(researchTaskService.getReport(workspaceId, taskId));
+    }
+
     @GetMapping("/{taskId}/citations")
     @Operation(summary = "任务引用列表（结论可追溯来源）")
     public BaseResponse<List<CitationResponse>> citations(
             @PathVariable String workspaceId,
             @PathVariable String taskId) {
         return ResultUtils.success(researchTaskService.listCitations(workspaceId, taskId));
+    }
+
+    /**
+     * 历史事件 JSON（与 SSE 路径分离，避免 content-negotiation 冲突）。
+     */
+    @GetMapping("/{taskId}/event-log")
+    @Operation(summary = "任务历史事件列表（详情页首屏灌入）")
+    public BaseResponse<List<TaskEventResponse>> eventLog(
+            @PathVariable String workspaceId,
+            @PathVariable String taskId,
+            @RequestParam(value = "fromEventNo", required = false, defaultValue = "0") long fromEventNo) {
+        return ResultUtils.success(researchTaskService.listEvents(workspaceId, taskId, fromEventNo));
     }
 
     @GetMapping(value = "/{taskId}/events", produces = MediaType.TEXT_EVENT_STREAM_VALUE)

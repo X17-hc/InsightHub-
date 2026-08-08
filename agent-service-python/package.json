@@ -1,0 +1,17 @@
+{
+  "name": "agent-service-python",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/X17-hc/InsightHub-.git"
+  },
+  "private": true,
+  "dependencies": {
+    "vite": "^8.2.1"
+  }
+}

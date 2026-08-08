@@ -33,9 +33,12 @@ import com.hechang.insighthub.model.dto.task.AgentEventDto;
 import com.hechang.insighthub.model.dto.task.AgentTaskResponseDto;
 import com.hechang.insighthub.model.dto.task.CreateResearchTaskRequest;
 import com.hechang.insighthub.model.dto.task.CreateTaskAcceptedResponse;
+import com.hechang.insighthub.model.dto.task.ReportResponse;
 import com.hechang.insighthub.model.dto.task.TaskControlResponse;
+import com.hechang.insighthub.model.dto.task.TaskEventResponse;
 import com.hechang.insighthub.model.dto.task.TaskSummaryResponse;
 import com.hechang.insighthub.model.entity.Citation;
+import com.hechang.insighthub.model.entity.TaskEvent;
 import com.hechang.insighthub.model.entity.KnowledgeBase;
 import com.hechang.insighthub.model.entity.Report;
 import com.hechang.insighthub.model.entity.ResearchTask;
@@ -255,11 +258,43 @@ public class ResearchTaskServiceImpl extends ServiceImpl<ResearchTaskMapper, Res
     }
 
     @Override
+    public ReportResponse getReport(String workspaceId, String taskId) {
+        String userId = SecurityUtils.requireUserId();
+        accessService.requireMember(workspaceId, userId);
+        requireTask(workspaceId, taskId);
+        Report report = reportMapper.findLatestByTaskAndWorkspace(taskId, workspaceId);
+        if (report == null) {
+            throw BusinessException.notFound("report not found");
+        }
+        return new ReportResponse(
+                report.getId(),
+                report.getTaskId(),
+                report.getWorkspaceId(),
+                report.getVersion(),
+                report.getTitle(),
+                report.getMarkdownContent(),
+                report.getStatus(),
+                report.getCreatedAt(),
+                report.getUpdatedAt());
+    }
+
+    @Override
     public List<CitationResponse> listCitations(String workspaceId, String taskId) {
         String userId = SecurityUtils.requireUserId();
         accessService.requireMember(workspaceId, userId);
         requireTask(workspaceId, taskId);
         return citationMapper.listByTaskId(taskId).stream().map(this::toCitationResponse).toList();
+    }
+
+    @Override
+    public List<TaskEventResponse> listEvents(String workspaceId, String taskId, long fromEventNo) {
+        String userId = SecurityUtils.requireUserId();
+        accessService.requireMember(workspaceId, userId);
+        requireTask(workspaceId, taskId);
+        long from = Math.max(0L, fromEventNo);
+        return taskEventMapper.listAfterEventNo(taskId, from).stream()
+                .map(row -> toEventResponse(taskId, row))
+                .toList();
     }
 
     @Override
@@ -490,6 +525,37 @@ public class ResearchTaskServiceImpl extends ServiceImpl<ResearchTaskMapper, Res
         }
     }
 
+    /**
+     * 将落库事件转为前端时间线 DTO（与 SSE 推送字段对齐）。
+     *
+     * @param taskId 任务 ID
+     * @param row    事件行
+     * @return 响应 DTO
+     */
+    private TaskEventResponse toEventResponse(String taskId, TaskEvent row) {
+        Map<String, Object> data = Map.of();
+        if (row.getPayloadJson() != null && !row.getPayloadJson().isBlank()) {
+            try {
+                @SuppressWarnings("unchecked")
+                Map<String, Object> parsed = objectMapper.readValue(row.getPayloadJson(), Map.class);
+                data = parsed == null ? Map.of() : parsed;
+            } catch (Exception ex) {
+                log.warn("parse event payload failed taskId={} eventNo={}", taskId, row.getEventNo());
+            }
+        }
+        String ts = row.getCreatedAt() == null
+                ? null
+                : row.getCreatedAt().toInstant(ZoneOffset.UTC).toString();
+        return new TaskEventResponse(
+                row.getEventNo() == null ? 0L : row.getEventNo(),
+                taskId,
+                row.getRunId(),
+                row.getNodeName(),
+                row.getEventType(),
+                ts,
+                data);
+    }
+
     private CitationResponse toCitationResponse(Citation c) {
         return new CitationResponse(
                 c.getId(),
@@ -670,6 +736,14 @@ public class ResearchTaskServiceImpl extends ServiceImpl<ResearchTaskMapper, Res
 
     private void insertReport(
             String reportId, String taskId, String workspaceId, String markdown, String title) {
+        // 检测替换字符：通常意味着上游解码/字符集链路损坏（UTF-8 被误读）
+        if (markdown != null && markdown.indexOf('\uFFFD') >= 0) {
+            log.error(
+                    "report markdown contains U+FFFD replacement chars taskId={} reportId={} title={}",
+                    taskId,
+                    reportId,
+                    title);
+        }
         Report report = new Report();
         report.setId(reportId);
         report.setTaskId(taskId);

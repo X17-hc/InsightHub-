@@ -14,12 +14,15 @@ import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+import org.springframework.security.web.context.SecurityContextRepository;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.hechang.insighthub.config.DocsProperties;
 
 /**
  * Spring Security：JWT 无状态会话。
+ *
+ * <p>SSE 使用 Servlet 异步派发；SecurityContext 仓库见 {@link SecurityContextConfig}。
  */
 @Configuration
 @EnableWebSecurity
@@ -45,10 +48,16 @@ public class SecurityConfig {
     }
 
     @Bean
-    public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
+    public SecurityFilterChain securityFilterChain(
+            HttpSecurity http,
+            SecurityContextRepository securityContextRepository) throws Exception {
         http.csrf(csrf -> csrf.disable())
                 .cors(Customizer.withDefaults())
                 .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+                // B：ASYNC 派发时从 request 恢复登录态；变更后自动保存到 Repository
+                .securityContext(securityContext -> securityContext
+                        .securityContextRepository(securityContextRepository)
+                        .requireExplicitSave(false))
                 .authorizeHttpRequests(auth -> {
                     auth.requestMatchers(
                                     "/api/v1/auth/register",

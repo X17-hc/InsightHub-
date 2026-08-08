@@ -19,6 +19,33 @@ _TIMEOUT = 12.0
 _MAX_REDIRECTS = 3
 
 
+def _decode_html(raw: bytes, declared: str | None, content_type: str) -> str:
+    """
+    按优先级解码 HTML：UTF-8 → Content-Type charset → 声明编码 → latin-1。
+    避免一律 errors=replace 把合法多字节中文打成 U+FFFD。
+    """
+    candidates: list[str] = ["utf-8"]
+    # Content-Type: text/html; charset=gbk
+    m = re.search(r"charset=([\w\-]+)", content_type or "", flags=re.I)
+    if m:
+        candidates.append(m.group(1).strip().lower())
+    if declared:
+        candidates.append(declared.strip().lower())
+    candidates.append("gb18030")
+
+    seen: set[str] = set()
+    for enc in candidates:
+        if not enc or enc in seen:
+            continue
+        seen.add(enc)
+        try:
+            return raw.decode(enc)
+        except (LookupError, UnicodeDecodeError):
+            continue
+    # 最后兜底：保留字节语义，不再制造 U+FFFD
+    return raw.decode("latin-1")
+
+
 def _prepare_public_request(url: str) -> tuple[str, str, str] | None:
     """校验公网目标，并返回固定 IP 的请求 URL、Host 与 SNI。"""
     parsed = urlparse(url)
@@ -130,7 +157,8 @@ def fetch_url(url: str, timeout_seconds: float = _TIMEOUT) -> dict[str, Any] | N
                             return None
                         chunks.append(chunk)
                     raw = b"".join(chunks)
-                    html = raw.decode(resp.encoding or "utf-8", errors="replace")
+                    # 优先 UTF-8；声明编码失败时再回退，避免 errors=replace 把中文打成 U+FFFD
+                    html = _decode_html(raw, resp.encoding, ctype)
                     break
             else:
                 return None

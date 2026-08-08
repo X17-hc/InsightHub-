@@ -22,7 +22,7 @@ public class OpenApiConfig {
                 .info(new Info()
                         .title("InsightHub API")
                         .version("0.2.0")
-                        .description("第 2 周：JWT / 工作空间 / Agent / 研究任务"))
+                        .description("测试"))
                 .addSecurityItem(new SecurityRequirement().addList(scheme))
                 .components(new Components().addSecuritySchemes(
                         scheme,

@@ -1,0 +1,34 @@
+{
+  "name": "insighthub-frontend",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "node ./node_modules/vite/bin/vite.js --host 0.0.0.0 --port 5173",
+    "build": "node ./node_modules/vue-tsc/bin/vue-tsc.js -b && node ./node_modules/vite/bin/vite.js build",
+    "type-check": "node ./node_modules/vue-tsc/bin/vue-tsc.js -b --pretty false",
+    "test": "node ./node_modules/vitest/vitest.mjs run"
+  },
+  "dependencies": {
+    "ant-design-vue": "^4.2.6",
+    "axios": "^1.7.9",
+    "highlight.js": "^11.11.1",
+    "@lucide/vue": "^1.30.0",
+    "markdown-it": "^14.1.0",
+    "pinia": "^2.3.0",
+    "vue": "^3.5.13",
+    "vue-router": "^4.5.0"
+  },
+  "devDependencies": {
+    "@tsconfig/node22": "^22.0.2",
+    "@types/node": "^22.10.5",
+    "@types/markdown-it": "^14.1.2",
+    "@vitejs/plugin-vue": "^5.2.1",
+    "@vue/tsconfig": "^0.7.0",
+    "typescript": "~5.7.2",
+    "terser": "^5.49.2",
+    "vite": "^6.0.5",
+    "vitest": "^4.1.10",
+    "vue-tsc": "^2.2.0"
+  }
+}

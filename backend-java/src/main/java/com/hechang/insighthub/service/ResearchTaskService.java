@@ -8,7 +8,9 @@ import com.hechang.insighthub.model.dto.knowledge.CitationResponse;
 import com.hechang.insighthub.model.dto.task.AgentTaskResponseDto;
 import com.hechang.insighthub.model.dto.task.CreateResearchTaskRequest;
 import com.hechang.insighthub.model.dto.task.CreateTaskAcceptedResponse;
+import com.hechang.insighthub.model.dto.task.ReportResponse;
 import com.hechang.insighthub.model.dto.task.TaskControlResponse;
+import com.hechang.insighthub.model.dto.task.TaskEventResponse;
 import com.hechang.insighthub.model.dto.task.TaskSummaryResponse;
 import com.hechang.insighthub.model.entity.ResearchTask;
 import com.mybatisflex.core.service.IService;
@@ -30,8 +32,18 @@ public interface ResearchTaskService extends IService<ResearchTask> {
     /** 任务详情 */
     TaskSummaryResponse get(String workspaceId, String taskId);
 
+    /** Latest generated report for a task. */
+    ReportResponse getReport(String workspaceId, String taskId);
+
     /** 任务引用列表（可追溯来源） */
     List<CitationResponse> listCitations(String workspaceId, String taskId);
+
+    /**
+     * 历史事件列表（详情页首屏灌入；SSE 用 fromEventNo 续传）。
+     *
+     * @param fromEventNo 仅返回 event_no 大于该值的事件；传 0 表示全量
+     */
+    List<TaskEventResponse> listEvents(String workspaceId, String taskId, long fromEventNo);
 
     /** SSE 事件流 */
     SseEmitter streamEvents(String workspaceId, String taskId, long fromEventNo);

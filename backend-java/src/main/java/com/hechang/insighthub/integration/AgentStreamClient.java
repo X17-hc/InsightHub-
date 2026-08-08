@@ -148,6 +148,10 @@ public class AgentStreamClient {
                                 continue;
                             }
                             try {
+                                if (line.indexOf('\uFFFD') >= 0) {
+                                    log.error("NDJSON line contains U+FFFD; check Python charset / proxy encoding: {}",
+                                            abbreviate(line));
+                                }
                                 JsonNode node = objectMapper.readTree(line);
                                 onLine.accept(node);
                             } catch (Exception ex) {

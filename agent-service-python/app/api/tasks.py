@@ -133,7 +133,8 @@ def stream_agent_task(
                         "streamFinished": True,
                     }
 
-    return StreamingResponse(gen(), media_type="application/x-ndjson")
+    # 显式 charset=utf-8，避免中间代理/客户端按平台编码误读中文
+    return StreamingResponse(gen(), media_type="application/x-ndjson; charset=utf-8")
 
 
 @router.post("/internal/v1/agent/tasks/{task_id}/resume", response_model=None)
@@ -157,4 +158,4 @@ def resume_agent_task(
             )
         )
 
-    return StreamingResponse(gen(), media_type="application/x-ndjson")
+    return StreamingResponse(gen(), media_type="application/x-ndjson; charset=utf-8")

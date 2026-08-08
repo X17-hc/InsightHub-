@@ -1,0 +1,17 @@
+.workspace-onboarding .ant-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.onboarding-icon {
+  width: 42px;
+  height: 42px;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  color: #2f7561;
+  background: #e7f3ec;
+  margin-bottom: 27px;
+}
