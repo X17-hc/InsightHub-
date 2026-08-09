@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "node ./node_modules/vite/bin/vite.js --host 0.0.0.0 --port 5173",
+    "dev": "node ./node_modules/vite/bin/vite.js --host 0.0.0.0 --port 5177",
     "build": "node ./node_modules/vue-tsc/bin/vue-tsc.js -b && node ./node_modules/vite/bin/vite.js build",
     "type-check": "node ./node_modules/vue-tsc/bin/vue-tsc.js -b --pretty false",
     "test": "node ./node_modules/vitest/vitest.mjs run"

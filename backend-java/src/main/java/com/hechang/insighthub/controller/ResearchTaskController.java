@@ -99,7 +99,7 @@ public class ResearchTaskController {
     /**
      * 历史事件 JSON（与 SSE 路径分离，避免 content-negotiation 冲突）。
      */
-    @GetMapping("/{taskId}/event-log")
+    @GetMapping({"/{taskId}/event-records", "/{taskId}/event-log"})
     @Operation(summary = "任务历史事件列表（详情页首屏灌入）")
     public BaseResponse<List<TaskEventResponse>> eventLog(
             @PathVariable String workspaceId,

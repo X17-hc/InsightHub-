@@ -4,10 +4,10 @@
 $ErrorActionPreference = "Stop"
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
 $EnvFile = Join-Path $ProjectRoot ".env"
-$psql = "C:\Program Files\PostgreSQL\16\bin\psql.exe"
+$psql = "C:\Program Files\PostgreSQL\18\bin\psql.exe"
 
 if (-not (Test-Path $psql)) {
-    throw "未找到 PostgreSQL 16 的 psql.exe"
+    throw "未找到 PostgreSQL 18 的 psql.exe"
 }
 
 function Read-DotEnv([string]$Path) {

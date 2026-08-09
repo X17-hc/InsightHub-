@@ -15,5 +15,5 @@ export const researchTaskApi = {
   citations: (workspaceId: string, taskId: string) => http.get<Citation[]>(`${base(workspaceId)}/${taskId}/citations`),
   /** 历史事件（详情首屏灌入；与 SSE /events 分离） */
   eventLog: (workspaceId: string, taskId: string, fromEventNo = 0) =>
-    http.get<TaskEvent[]>(`${base(workspaceId)}/${taskId}/event-log`, { params: { fromEventNo } }),
+    http.get<TaskEvent[]>(`${base(workspaceId)}/${taskId}/event-records`, { params: { fromEventNo } }),
 }

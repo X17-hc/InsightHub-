@@ -375,6 +375,7 @@ def _stream_graph(
     last_event_count = 0 if resume else 1
     final_state: dict[str, Any] | None = None
     config = {"configurable": {"thread_id": task_id}}
+    emitted_event_ids: set[int] = set()
     if resume:
         try:
             snap = graph.get_state(config)
@@ -385,7 +386,25 @@ def _stream_graph(
 
     try:
         stream_input: Any = input_state
-        for chunk in graph.stream(stream_input, config=config, stream_mode="values"):
+        for stream_item in graph.stream(stream_input, config=config, stream_mode=["custom", "values"]):
+            mode = "values"
+            chunk = stream_item
+            if isinstance(stream_item, tuple) and len(stream_item) == 2:
+                mode, chunk = stream_item
+
+            if mode == "custom":
+                if isinstance(chunk, dict) and chunk.get("type") and chunk.get("eventId") is not None:
+                    try:
+                        event_id = int(chunk.get("eventId") or 0)
+                    except (TypeError, ValueError):
+                        event_id = 0
+                    if event_id > 0 and event_id not in emitted_event_ids:
+                        emitted_event_ids.add(event_id)
+                        yield _dumps_event(chunk)
+                continue
+
+            if mode != "values":
+                continue
             if not isinstance(chunk, dict):
                 continue
             final_state = chunk
@@ -393,6 +412,14 @@ def _stream_graph(
             # 仅 flush 新增事件
             if len(events) > last_event_count:
                 for ev in events[last_event_count:]:
+                    try:
+                        event_id = int(ev.get("eventId") or 0)
+                    except (TypeError, ValueError):
+                        event_id = 0
+                    if event_id > 0 and event_id in emitted_event_ids:
+                        continue
+                    if event_id > 0:
+                        emitted_event_ids.add(event_id)
                     yield _dumps_event(ev)
                 last_event_count = len(events)
 

@@ -1,5 +1,6 @@
 package com.hechang.insighthub.integration;
 
+import java.io.ByteArrayOutputStream;
 import java.time.Duration;
 import java.util.HashMap;
 import java.util.List;
@@ -126,24 +127,28 @@ public class AgentStreamClient {
     }
 
     private void consumeNdjson(Flux<DataBuffer> flux, Consumer<JsonNode> onLine) {
-        StringBuilder buf = new StringBuilder();
+        ByteArrayOutputStream buf = new ByteArrayOutputStream();
         AtomicInteger badLines = new AtomicInteger();
         try {
             flux.map(db -> {
                         byte[] bytes = new byte[db.readableByteCount()];
                         db.read(bytes);
                         DataBufferUtils.release(db);
-                        return new String(bytes, java.nio.charset.StandardCharsets.UTF_8);
+                        return bytes;
                     })
                     .doOnNext(chunk -> {
-                        buf.append(chunk);
-                        if (buf.length() > MAX_BUFFER_CHARS) {
+                        buf.writeBytes(chunk);
+                        if (buf.size() > MAX_BUFFER_CHARS) {
                             throw new IllegalStateException("NDJSON buffer exceeded " + MAX_BUFFER_CHARS + " chars");
                         }
+                        byte[] bytes = buf.toByteArray();
                         int idx;
-                        while ((idx = indexOfNewline(buf)) >= 0) {
-                            String line = buf.substring(0, idx).trim();
-                            buf.delete(0, idx + 1);
+                        while ((idx = indexOfNewline(bytes)) >= 0) {
+                            String line = new String(bytes, 0, idx, java.nio.charset.StandardCharsets.UTF_8).trim();
+                            byte[] remaining = java.util.Arrays.copyOfRange(bytes, idx + 1, bytes.length);
+                            buf.reset();
+                            buf.writeBytes(remaining);
+                            bytes = remaining;
                             if (line.isEmpty()) {
                                 continue;
                             }
@@ -164,7 +169,7 @@ public class AgentStreamClient {
                         }
                     })
                     .blockLast();
-            String rest = buf.toString().trim();
+            String rest = new String(buf.toByteArray(), java.nio.charset.StandardCharsets.UTF_8).trim();
             if (!rest.isEmpty()) {
                 try {
                     onLine.accept(objectMapper.readTree(rest));
@@ -190,9 +195,9 @@ public class AgentStreamClient {
         return line.length() <= 200 ? line : line.substring(0, 200) + "...";
     }
 
-    private static int indexOfNewline(StringBuilder buf) {
-        for (int i = 0; i < buf.length(); i++) {
-            if (buf.charAt(i) == '\n') {
+    private static int indexOfNewline(byte[] buf) {
+        for (int i = 0; i < buf.length; i++) {
+            if (buf[i] == '\n') {
                 return i;
             }
         }
