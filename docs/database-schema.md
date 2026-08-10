@@ -247,7 +247,7 @@ Vue / Java API
 | task_id | 任务 ID |
 | event_no | 任务内单调序号 |
 | run_id / node_run_id / node_name | 执行定位 |
-| event_type | TASK_STARTED / PLAN_CREATED / NODE_COMPLETED / REPORT_TOKEN 等 |
+| event_type | TASK_STARTED / PLAN_CREATED / NODE_COMPLETED / REPORT_DELTA 等 |
 | payload_json | 事件载荷 |
 | created_at | 产生时间 |
 

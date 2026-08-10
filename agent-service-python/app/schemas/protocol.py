@@ -48,6 +48,7 @@ class AgentTaskRequest(BaseModel):
 class AgentEvent(BaseModel):
     """节点事件。"""
 
+    schema_version: str = Field(default="1.0", alias="schemaVersion")
     event_id: int = Field(alias="eventId")
     task_id: str = Field(alias="taskId")
     run_id: str = Field(alias="runId")

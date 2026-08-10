@@ -12,6 +12,7 @@ import lombok.Data;
 @Data
 public class AgentEventDto {
 
+    private String schemaVersion = "1.0";
     private Long eventId;
     private String taskId;
     private String runId;

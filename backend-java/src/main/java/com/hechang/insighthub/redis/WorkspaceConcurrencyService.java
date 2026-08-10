@@ -59,9 +59,9 @@ public class WorkspaceConcurrencyService {
             log.error("Workspace concurrency acquire interrupted workspaceId={}", workspaceId, ex);
             throw new BusinessException(ErrorCode.OPERATION_ERROR, "workspace concurrency acquire interrupted");
         } catch (Exception ex) {
-            // Redis 故障：开放并打错误日志；调用方不得 markHeld / release
-            log.error("Workspace concurrency acquire degraded (allow) workspaceId={}", workspaceId, ex);
-            return null;
+            log.error("Workspace concurrency unavailable workspaceId={}", workspaceId, ex);
+            throw new BusinessException(ErrorCode.OPERATION_ERROR,
+                    "WORKSPACE_CONCURRENCY_UNAVAILABLE: Redis is required for task admission");
         }
     }
 

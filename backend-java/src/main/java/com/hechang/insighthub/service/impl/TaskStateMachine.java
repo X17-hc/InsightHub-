@@ -48,12 +48,17 @@ public class TaskStateMachine {
      * 校验并返回目标状态；非法迁移抛 409。
      */
     public TaskStatus transition(TaskStatus from, TaskStatus to) {
-        Set<TaskStatus> allowed = transitions.getOrDefault(from, EnumSet.noneOf(TaskStatus.class));
-        if (!allowed.contains(to)) {
+        if (!canTransition(from, to)) {
             throw BusinessException.conflict(
                     "INVALID_STATUS_TRANSITION",
                     "cannot transition from " + from + " to " + to);
         }
         return to;
+    }
+
+    public boolean canTransition(TaskStatus from, TaskStatus to) {
+        if (from == null || to == null) return false;
+        Set<TaskStatus> allowed = transitions.getOrDefault(from, EnumSet.noneOf(TaskStatus.class));
+        return allowed.contains(to);
     }
 }

@@ -48,8 +48,9 @@ public class TaskSlotTracker {
                     lease.serialize(),
                     Duration.ofSeconds(Math.max(60, ttlSeconds)));
         } catch (Exception ex) {
-            // 本 JVM 仍可 release；跨进程依赖 Redis 写成功
-            log.error("Redis markHeld failed taskId={} (local tracker kept)", taskId, ex);
+            // 保留本 JVM 凭证，调用方的异常收敛路径仍可释放已获取的 semaphore 许可。
+            log.error("Redis markHeld failed taskId={} (local release retained)", taskId, ex);
+            throw new IllegalStateException("task slot tracking unavailable", ex);
         }
     }
 

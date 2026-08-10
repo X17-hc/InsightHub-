@@ -65,6 +65,7 @@ X-Idempotency-Key: <taskId>-attempt-<n>
 
 ```json
 {
+  "schemaVersion": "1.0",
   "eventId": 1,
   "taskId": "task-xxx",
   "runId": "run-xxx",
@@ -74,6 +75,9 @@ X-Idempotency-Key: <taskId>-attempt-<n>
   "data": {}
 }
 ```
+
+`REPORT_DELTA` 的 `data` 固定包含 `delta`、`sequence` 和 `done`，客户端必须按
+`eventId` 去重，并按 `sequence` 追加报告片段。
 
 ### 事件类型（全集声明）
 
@@ -87,7 +91,7 @@ X-Idempotency-Key: <taskId>-attempt-<n>
 | TOOL_COMPLETED | 可选 |
 | NODE_COMPLETED | 是 |
 | NODE_RETRYING | 否（预留） |
-| REPORT_TOKEN | 否（第 3 周流式） |
+| REPORT_DELTA | 是（第 3 周流式） |
 | TASK_PAUSED | 否（预留） |
 | TASK_COMPLETED | 是 |
 | TASK_FAILED | 是 |

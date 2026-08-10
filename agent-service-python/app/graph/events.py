@@ -24,7 +24,8 @@ def make_event(
     data: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """构造一条符合协议的事件 dict（使用 camelCase 键，便于 Java 侧直接落库）。"""
-    return {
+    payload = {
+        "schemaVersion": "1.0",
         "eventId": next_event_id(events),
         "taskId": task_id,
         "runId": run_id,
@@ -33,3 +34,7 @@ def make_event(
         "timestamp": utc_now_iso(),
         "data": data or {},
     }
+    if event_type == "REPORT_DELTA":
+        payload["data"].setdefault("sequence", payload["data"].get("index", 0))
+        payload["data"].setdefault("done", False)
+    return payload

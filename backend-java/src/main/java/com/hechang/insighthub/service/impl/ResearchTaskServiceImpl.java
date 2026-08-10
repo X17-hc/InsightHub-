@@ -1,9 +1,6 @@
 package com.hechang.insighthub.service.impl;
 
-import java.sql.Timestamp;
-import java.time.Instant;
 import java.time.LocalDateTime;
-import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -23,11 +20,8 @@ import com.hechang.insighthub.config.TaskProperties;
 import com.hechang.insighthub.exception.BusinessException;
 import com.hechang.insighthub.exception.ErrorCode;
 import com.hechang.insighthub.integration.AgentServiceClient;
-import com.hechang.insighthub.mapper.CitationMapper;
 import com.hechang.insighthub.mapper.KnowledgeBaseMapper;
-import com.hechang.insighthub.mapper.ReportMapper;
 import com.hechang.insighthub.mapper.ResearchTaskMapper;
-import com.hechang.insighthub.mapper.TaskEventMapper;
 import com.hechang.insighthub.model.dto.knowledge.CitationResponse;
 import com.hechang.insighthub.model.dto.task.AgentEventDto;
 import com.hechang.insighthub.model.dto.task.AgentTaskResponseDto;
@@ -37,10 +31,7 @@ import com.hechang.insighthub.model.dto.task.ReportResponse;
 import com.hechang.insighthub.model.dto.task.TaskControlResponse;
 import com.hechang.insighthub.model.dto.task.TaskEventResponse;
 import com.hechang.insighthub.model.dto.task.TaskSummaryResponse;
-import com.hechang.insighthub.model.entity.Citation;
-import com.hechang.insighthub.model.entity.TaskEvent;
 import com.hechang.insighthub.model.entity.KnowledgeBase;
-import com.hechang.insighthub.model.entity.Report;
 import com.hechang.insighthub.model.entity.ResearchTask;
 import com.hechang.insighthub.model.enums.TaskStatus;
 import com.hechang.insighthub.model.enums.WorkspaceRole;
@@ -64,9 +55,6 @@ public class ResearchTaskServiceImpl extends ServiceImpl<ResearchTaskMapper, Res
     private static final Logger log = LoggerFactory.getLogger(ResearchTaskServiceImpl.class);
 
     private final AgentServiceClient agentServiceClient;
-    private final TaskEventMapper taskEventMapper;
-    private final ReportMapper reportMapper;
-    private final CitationMapper citationMapper;
     private final KnowledgeBaseMapper knowledgeBaseMapper;
     private final WorkspaceAccessService accessService;
     private final TaskStateMachine stateMachine;
@@ -80,12 +68,12 @@ public class ResearchTaskServiceImpl extends ServiceImpl<ResearchTaskMapper, Res
     private final TaskStreamLease streamLease;
     private final TaskProperties taskProperties;
     private final ObjectMapper objectMapper;
+    private final TaskResultService taskResultService;
+    private final TaskEventService taskEventService;
+    private final ResearchTaskQueryService taskQueryService;
 
     public ResearchTaskServiceImpl(
             AgentServiceClient agentServiceClient,
-            TaskEventMapper taskEventMapper,
-            ReportMapper reportMapper,
-            CitationMapper citationMapper,
             KnowledgeBaseMapper knowledgeBaseMapper,
             WorkspaceAccessService accessService,
             TaskStateMachine stateMachine,
@@ -98,11 +86,11 @@ public class ResearchTaskServiceImpl extends ServiceImpl<ResearchTaskMapper, Res
             TaskEventSseHub sseHub,
             TaskStreamLease streamLease,
             TaskProperties taskProperties,
-            ObjectMapper objectMapper) {
+            ObjectMapper objectMapper,
+            TaskResultService taskResultService,
+            TaskEventService taskEventService,
+            ResearchTaskQueryService taskQueryService) {
         this.agentServiceClient = agentServiceClient;
-        this.taskEventMapper = taskEventMapper;
-        this.reportMapper = reportMapper;
-        this.citationMapper = citationMapper;
         this.knowledgeBaseMapper = knowledgeBaseMapper;
         this.accessService = accessService;
         this.stateMachine = stateMachine;
@@ -116,6 +104,9 @@ public class ResearchTaskServiceImpl extends ServiceImpl<ResearchTaskMapper, Res
         this.streamLease = streamLease;
         this.taskProperties = taskProperties;
         this.objectMapper = objectMapper;
+        this.taskResultService = taskResultService;
+        this.taskEventService = taskEventService;
+        this.taskQueryService = taskQueryService;
     }
 
     @Override
@@ -130,11 +121,9 @@ public class ResearchTaskServiceImpl extends ServiceImpl<ResearchTaskMapper, Res
         String traceId = "trace-" + UUID.randomUUID().toString().replace("-", "").substring(0, 16);
         int ttl = taskProperties.getDefaultTimeoutSeconds() + 600;
         String permitId = concurrencyService.tryAcquire(workspaceId, ttl);
-        if (permitId != null) {
-            slotTracker.markHeld(taskId, workspaceId, permitId, ttl);
-        }
 
         try {
+            slotTracker.markHeld(taskId, workspaceId, permitId, ttl);
             insertCreatedTask(taskId, workspaceId, userId, query, traceId, kbIds);
             advance(taskId, workspaceId, TaskStatus.CREATED, TaskStatus.PLANNING, 10, "create_plan");
             advance(taskId, workspaceId, TaskStatus.PLANNING, TaskStatus.RUNNING, 30, "dispatch_tasks");
@@ -201,16 +190,13 @@ public class ResearchTaskServiceImpl extends ServiceImpl<ResearchTaskMapper, Res
             final String finalErrorMessage = errorMessage;
             try {
                 transactionTemplate.executeWithoutResult(tx -> {
-                    if ("COMPLETED".equalsIgnoreCase(finalStatus)) {
+                    if (TaskStatus.COMPLETED.matches(finalStatus)) {
                         if (response.getReportMarkdown() == null || response.getReportMarkdown().isBlank()) {
                             throw new IllegalStateException("completed task has no report");
                         }
                         advance(taskId, workspaceId, TaskStatus.RUNNING, TaskStatus.GENERATING, 80, "write_report");
-                        String reportId = "report-"
-                                + UUID.randomUUID().toString().replace("-", "").substring(0, 16);
-                        insertReport(reportId, taskId, workspaceId, response.getReportMarkdown(),
-                                extractTitle(response.getReportMarkdown()));
-                        insertCitations(reportId, taskId, response.getCitations());
+                        taskResultService.saveReportAndCitations(
+                                taskId, workspaceId, response.getReportMarkdown(), response.getCitations());
                         advance(taskId, workspaceId, TaskStatus.GENERATING, TaskStatus.COMPLETED, 100, "finalize");
                         mapper.updateTaskFinished(
                                 taskId, workspaceId, TaskStatus.COMPLETED.name(), response.getRunId(), null, null);
@@ -241,60 +227,27 @@ public class ResearchTaskServiceImpl extends ServiceImpl<ResearchTaskMapper, Res
 
     @Override
     public List<TaskSummaryResponse> list(String workspaceId) {
-        String userId = SecurityUtils.requireUserId();
-        accessService.requireMember(workspaceId, userId);
-        return mapper.listByWorkspace(workspaceId).stream().map(this::toSummary).toList();
+        return taskQueryService.list(workspaceId);
     }
 
     @Override
     public TaskSummaryResponse get(String workspaceId, String taskId) {
-        String userId = SecurityUtils.requireUserId();
-        accessService.requireMember(workspaceId, userId);
-        ResearchTask task = mapper.findByIdAndWorkspace(taskId, workspaceId);
-        if (task == null) {
-            throw BusinessException.notFound("task not found");
-        }
-        return toSummary(task);
+        return taskQueryService.get(workspaceId, taskId);
     }
 
     @Override
     public ReportResponse getReport(String workspaceId, String taskId) {
-        String userId = SecurityUtils.requireUserId();
-        accessService.requireMember(workspaceId, userId);
-        requireTask(workspaceId, taskId);
-        Report report = reportMapper.findLatestByTaskAndWorkspace(taskId, workspaceId);
-        if (report == null) {
-            throw BusinessException.notFound("report not found");
-        }
-        return new ReportResponse(
-                report.getId(),
-                report.getTaskId(),
-                report.getWorkspaceId(),
-                report.getVersion(),
-                report.getTitle(),
-                report.getMarkdownContent(),
-                report.getStatus(),
-                report.getCreatedAt(),
-                report.getUpdatedAt());
+        return taskQueryService.getReport(workspaceId, taskId);
     }
 
     @Override
     public List<CitationResponse> listCitations(String workspaceId, String taskId) {
-        String userId = SecurityUtils.requireUserId();
-        accessService.requireMember(workspaceId, userId);
-        requireTask(workspaceId, taskId);
-        return citationMapper.listByTaskId(taskId).stream().map(this::toCitationResponse).toList();
+        return taskQueryService.listCitations(workspaceId, taskId);
     }
 
     @Override
     public List<TaskEventResponse> listEvents(String workspaceId, String taskId, long fromEventNo) {
-        String userId = SecurityUtils.requireUserId();
-        accessService.requireMember(workspaceId, userId);
-        requireTask(workspaceId, taskId);
-        long from = Math.max(0L, fromEventNo);
-        return taskEventMapper.listAfterEventNo(taskId, from).stream()
-                .map(row -> toEventResponse(taskId, row))
-                .toList();
+        return taskQueryService.listEvents(workspaceId, taskId, fromEventNo);
     }
 
     @Override
@@ -329,9 +282,6 @@ public class ResearchTaskServiceImpl extends ServiceImpl<ResearchTaskMapper, Res
         stateMachine.transition(TaskStatus.valueOf(row.getStatus()), TaskStatus.RUNNING);
         int ttl = taskProperties.getDefaultTimeoutSeconds() + 600;
         String permitId = concurrencyService.tryAcquire(workspaceId, ttl);
-        if (permitId != null) {
-            slotTracker.markHeld(taskId, workspaceId, permitId, ttl);
-        }
         try {
             transactionTemplate.executeWithoutResult(tx -> {
                 ResearchTask locked = requireTaskForUpdate(workspaceId, taskId);
@@ -375,14 +325,14 @@ public class ResearchTaskServiceImpl extends ServiceImpl<ResearchTaskMapper, Res
     public TaskControlResponse cancel(String workspaceId, String taskId) {
         String userId = SecurityUtils.requireUserId();
         requireControllableTask(workspaceId, taskId, userId);
-        StoredTaskEvent cancelled = transactionTemplate.execute(tx -> {
+        TaskEventService.StoredEvent cancelled = transactionTemplate.execute(tx -> {
             ResearchTask row = requireTaskForUpdate(workspaceId, taskId);
             TaskStatus from = TaskStatus.valueOf(row.getStatus());
             stateMachine.transition(from, TaskStatus.CANCELLED);
             mapper.updateTaskFinished(
                     taskId, workspaceId, TaskStatus.CANCELLED.name(), row.getCurrentRunId(),
                     "CANCELLED", truncate("cancelled by user", 1024));
-            return insertTerminalEvent(
+            return taskEventService.insertTerminalResult(
                     taskId,
                     row.getCurrentRunId(),
                     TaskStatus.CANCELLED.name(),
@@ -410,6 +360,7 @@ public class ResearchTaskServiceImpl extends ServiceImpl<ResearchTaskMapper, Res
 
         String runId = "run-" + UUID.randomUUID().toString().replace("-", "").substring(0, 12);
         try {
+            slotTracker.markHeld(taskId, workspaceId, permitId, ttl);
             transactionTemplate.executeWithoutResult(tx -> {
                 ResearchTask locked = requireTaskForUpdate(workspaceId, taskId);
                 stateMachine.transition(TaskStatus.valueOf(locked.getStatus()), TaskStatus.RUNNING);
@@ -499,83 +450,6 @@ public class ResearchTaskServiceImpl extends ServiceImpl<ResearchTaskMapper, Res
         return out;
     }
 
-    private void insertCitations(String reportId, String taskId, List<Map<String, Object>> citations) {
-        citationMapper.deleteByTaskId(taskId);
-        if (citations == null || citations.isEmpty()) {
-            return;
-        }
-        int i = 0;
-        for (Map<String, Object> c : citations) {
-            i++;
-            Citation citation = new Citation();
-            citation.setId("cit-" + UUID.randomUUID().toString().replace("-", "").substring(0, 16));
-            citation.setReportId(reportId);
-            citation.setTaskId(taskId);
-            Object noObj = c.get("citationNo");
-            int no = noObj instanceof Number n ? n.intValue() : i;
-            citation.setCitationNo(no);
-            citation.setSourceTitle(str(c.get("sourceTitle")));
-            citation.setSourceUri(str(c.get("sourceUri")));
-            citation.setSourceType(str(c.get("sourceType")));
-            citation.setDocumentId(str(c.get("documentId")));
-            citation.setChunkId(str(c.get("chunkId")));
-            citation.setQuotedText(str(c.get("quotedText")));
-            citation.setVerified(Boolean.TRUE.equals(c.get("verified")) ? 1 : 0);
-            citationMapper.insert(citation);
-        }
-    }
-
-    /**
-     * 将落库事件转为前端时间线 DTO（与 SSE 推送字段对齐）。
-     *
-     * @param taskId 任务 ID
-     * @param row    事件行
-     * @return 响应 DTO
-     */
-    private TaskEventResponse toEventResponse(String taskId, TaskEvent row) {
-        Map<String, Object> data = Map.of();
-        if (row.getPayloadJson() != null && !row.getPayloadJson().isBlank()) {
-            try {
-                @SuppressWarnings("unchecked")
-                Map<String, Object> parsed = objectMapper.readValue(row.getPayloadJson(), Map.class);
-                data = parsed == null ? Map.of() : parsed;
-            } catch (Exception ex) {
-                log.warn("parse event payload failed taskId={} eventNo={}", taskId, row.getEventNo());
-            }
-        }
-        String ts = row.getCreatedAt() == null
-                ? null
-                : row.getCreatedAt().toInstant(ZoneOffset.UTC).toString();
-        return new TaskEventResponse(
-                row.getEventNo() == null ? 0L : row.getEventNo(),
-                taskId,
-                row.getRunId(),
-                row.getNodeName(),
-                row.getEventType(),
-                ts,
-                data);
-    }
-
-    private CitationResponse toCitationResponse(Citation c) {
-        return new CitationResponse(
-                c.getId(),
-                c.getReportId(),
-                c.getTaskId(),
-                c.getCitationNo(),
-                c.getSourceTitle(),
-                c.getSourceUri(),
-                c.getSourceType(),
-                c.getDocumentId(),
-                c.getChunkId(),
-                c.getQuotedText(),
-                c.getVerified(),
-                c.getCreatedAt());
-    }
-
-    private static String str(Object o) {
-        return o == null ? null : String.valueOf(o);
-    }
-
     private ResearchTask requireTask(String workspaceId, String taskId) {
         ResearchTask task = mapper.findByIdAndWorkspace(taskId, workspaceId);
         if (task == null) {
@@ -609,55 +483,7 @@ public class ResearchTaskServiceImpl extends ServiceImpl<ResearchTaskMapper, Res
                 permitId -> concurrencyService.release(workspaceId, permitId));
     }
 
-    /** 在终态事务中插入可回放的标准 TASK_RESULT。 */
-    private StoredTaskEvent insertTerminalEvent(
-            String taskId,
-            String runId,
-            String status,
-            Map<String, Object> error) {
-        Map<String, Object> data = new LinkedHashMap<>();
-        data.put("status", status);
-        data.put("error", error);
-        data.put("hasReport", false);
-        String payload;
-        try {
-            payload = objectMapper.writeValueAsString(data);
-        } catch (JsonProcessingException ex) {
-            throw new IllegalStateException("serialize terminal event failed", ex);
-        }
-
-        long firstEventNo = taskEventMapper.maxEventNo(taskId) + 1;
-        String timestamp = Instant.now().toString();
-        for (int attempt = 0; attempt < 5; attempt++) {
-            long eventNo = firstEventNo + attempt;
-            int inserted = taskEventMapper.insertIgnore(
-                    taskId,
-                    eventNo,
-                    runId,
-                    null,
-                    "TASK_RESULT",
-                    payload,
-                    parseTs(timestamp));
-            if (inserted > 0) {
-                Map<String, Object> body = new LinkedHashMap<>();
-                body.put("eventId", eventNo);
-                body.put("taskId", taskId);
-                body.put("runId", runId);
-                body.put("node", null);
-                body.put("type", "TASK_RESULT");
-                body.put("timestamp", timestamp);
-                body.put("data", data);
-                try {
-                    return new StoredTaskEvent(eventNo, objectMapper.writeValueAsString(body));
-                } catch (JsonProcessingException ex) {
-                    throw new IllegalStateException("serialize terminal event envelope failed", ex);
-                }
-            }
-        }
-        throw new IllegalStateException("unable to allocate terminal event number");
-    }
-
-    private void publishStoredEvent(String taskId, StoredTaskEvent event) {
+    private void publishStoredEvent(String taskId, TaskEventService.StoredEvent event) {
         if (event == null) {
             return;
         }
@@ -676,10 +502,13 @@ public class ResearchTaskServiceImpl extends ServiceImpl<ResearchTaskMapper, Res
             if (row == null || isTerminal(row.getStatus())) {
                 return;
             }
-            try {
-                stateMachine.transition(TaskStatus.valueOf(row.getStatus()), TaskStatus.FAILED);
-            } catch (Exception ignored) {
-                // 初始化中断等异常也必须收敛到 FAILED
+            TaskStatus from = TaskStatus.tryParse(row.getStatus());
+            if (from == null) {
+                log.error("force failed task from invalid state taskId={} current={}", taskId, row.getStatus());
+            } else if (from != TaskStatus.FAILED && stateMachine.canTransition(from, TaskStatus.FAILED)) {
+                stateMachine.transition(from, TaskStatus.FAILED);
+            } else if (from != TaskStatus.FAILED) {
+                log.warn("force failed task bypassing state machine taskId={} from={}", taskId, from);
             }
             mapper.updateTaskFinished(
                     taskId, workspaceId, TaskStatus.FAILED.name(),
@@ -708,80 +537,7 @@ public class ResearchTaskServiceImpl extends ServiceImpl<ResearchTaskMapper, Res
         if (events == null || events.isEmpty()) {
             return;
         }
-        for (int i = 0; i < events.size(); i++) {
-            AgentEventDto event = events.get(i);
-            long eventNo = event.getEventId() != null ? event.getEventId() : (i + 1L);
-            insertEventIgnoreDuplicate(taskId, eventNo, event);
-        }
-    }
-
-    /** 插入单条事件；uk 冲突时忽略 */
-    private void insertEventIgnoreDuplicate(String taskId, long eventNo, AgentEventDto event) {
-        String payload;
-        try {
-            Map<String, Object> data = event.getData() == null ? Map.of() : event.getData();
-            payload = objectMapper.writeValueAsString(data);
-        } catch (JsonProcessingException e) {
-            payload = "{}";
-        }
-        taskEventMapper.insertIgnore(
-                taskId,
-                eventNo,
-                event.getRunId(),
-                event.getNode(),
-                event.getType(),
-                payload,
-                parseTs(event.getTimestamp()));
-    }
-
-    private void insertReport(
-            String reportId, String taskId, String workspaceId, String markdown, String title) {
-        // 检测替换字符：通常意味着上游解码/字符集链路损坏（UTF-8 被误读）
-        if (markdown != null && markdown.indexOf('\uFFFD') >= 0) {
-            log.error(
-                    "report markdown contains U+FFFD replacement chars taskId={} reportId={} title={}",
-                    taskId,
-                    reportId,
-                    title);
-        }
-        Report report = new Report();
-        report.setId(reportId);
-        report.setTaskId(taskId);
-        report.setWorkspaceId(workspaceId);
-        report.setVersion(1);
-        report.setTitle(title);
-        report.setMarkdownContent(markdown);
-        report.setStatus("READY");
-        reportMapper.insert(report);
-    }
-
-    private TaskSummaryResponse toSummary(ResearchTask row) {
-        TaskSummaryResponse r = new TaskSummaryResponse();
-        r.setTaskId(row.getId());
-        r.setWorkspaceId(row.getWorkspaceId());
-        r.setCreatorId(row.getCreatorId());
-        r.setQuery(row.getQuery());
-        r.setStatus(row.getStatus());
-        r.setProgress(row.getProgress() == null ? 0 : row.getProgress());
-        r.setTraceId(row.getTraceId());
-        r.setRunId(row.getCurrentRunId());
-        r.setErrorCode(row.getErrorCode());
-        r.setErrorMessage(row.getErrorMessage());
-        if (row.getCreatedAt() != null) {
-            r.setCreatedAt(Timestamp.valueOf(row.getCreatedAt()));
-        }
-        return r;
-    }
-
-    private static LocalDateTime parseTs(String iso) {
-        if (iso == null || iso.isBlank()) {
-            return LocalDateTime.now(ZoneOffset.UTC);
-        }
-        try {
-            return LocalDateTime.ofInstant(Instant.parse(iso), ZoneOffset.UTC);
-        } catch (Exception ex) {
-            return LocalDateTime.now(ZoneOffset.UTC);
-        }
+        taskEventService.insertAll(taskId, events);
     }
 
     private static String truncate(String value, int max) {
@@ -792,21 +548,7 @@ public class ResearchTaskServiceImpl extends ServiceImpl<ResearchTaskMapper, Res
     }
 
     private static boolean isTerminal(String status) {
-        return TaskStatus.COMPLETED.name().equalsIgnoreCase(status)
-                || TaskStatus.FAILED.name().equalsIgnoreCase(status)
-                || TaskStatus.CANCELLED.name().equalsIgnoreCase(status);
+        return TaskStatus.isTerminal(status);
     }
 
-    private static String extractTitle(String markdown) {
-        for (String line : markdown.split("\\R")) {
-            String trimmed = line.trim();
-            if (trimmed.startsWith("#")) {
-                return trimmed.replaceFirst("^#+\\s*", "");
-            }
-        }
-        return "InsightHub Report";
-    }
-
-    private record StoredTaskEvent(long eventNo, String json) {
-    }
 }

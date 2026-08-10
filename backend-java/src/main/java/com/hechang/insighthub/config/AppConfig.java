@@ -70,6 +70,13 @@ public class AppConfig {
     }
 
     /**
+     * 保留无 ObjectMapper 参数的直接调用入口，兼容配置单元测试和本地工具调用。
+     */
+    public WebClient agentWebClient(AgentProperties props) {
+        return agentWebClient(props, new ObjectMapper());
+    }
+
+    /**
      * 短事务模板：任务终态 / 报告 / 事件落库。
      */
     @Bean

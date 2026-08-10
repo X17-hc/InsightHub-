@@ -47,7 +47,10 @@ public class TaskCreateRateLimiter {
         } catch (BusinessException ex) {
             throw ex;
         } catch (Exception ex) {
-            log.error("RateLimiter degraded (allow) userId={}", userId, ex);
+            log.error("RateLimiter unavailable userId={}", userId, ex);
+            throw new BusinessException(
+                    com.hechang.insighthub.exception.ErrorCode.OPERATION_ERROR,
+                    "TASK_RATE_LIMITER_UNAVAILABLE: Redis is required for task admission");
         }
     }
 }

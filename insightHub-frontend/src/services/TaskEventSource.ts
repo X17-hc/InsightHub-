@@ -1,8 +1,8 @@
 import type { TaskEvent, TaskStatus } from '@/types'
+import { isTerminalTaskStatus } from '@/utils/display'
 
 type EventSourceFactory = (url: string) => EventSource
 const EVENT_TYPES = ['TASK_STARTED', 'PLAN_CREATED', 'NODE_STARTED', 'NODE_COMPLETED', 'TOOL_CALLED', 'TOOL_COMPLETED', 'REPORT_DELTA', 'TASK_PAUSED', 'TASK_COMPLETED', 'TASK_FAILED', 'TASK_RESULT']
-const TERMINAL_STATUSES: TaskStatus[] = ['COMPLETED', 'FAILED', 'CANCELLED']
 
 export class TaskEventSource {
   private source: EventSource | null = null
@@ -35,7 +35,7 @@ export class TaskEventSource {
       const event = { ...payload, eventId: eventNo, taskId: payload.taskId || this.taskId, type: payload.type || raw.type || 'message' } as TaskEvent
       this.onEvent(event)
       const status = (event.status || event.data?.status) as TaskStatus | undefined
-      if ((status && TERMINAL_STATUSES.includes(status)) || event.type === 'TASK_FAILED') this.close()
+      if ((status && isTerminalTaskStatus(status)) || event.type === 'TASK_FAILED') this.close()
     } catch { /* malformed heartbeat is intentionally ignored */ }
   }
   private reconnect(): void {

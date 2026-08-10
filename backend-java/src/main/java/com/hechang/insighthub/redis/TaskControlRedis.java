@@ -34,9 +34,7 @@ public class TaskControlRedis {
     }
 
     /**
-     * 写入控制字。Redis 故障时仅打错误日志（创建路径不因控制字失败而整单失败）。
-     *
-     * @return false 表示未写入 Redis
+     * 写入控制字。Redis 不可用时拒绝执行，避免 Agent 失去暂停/取消控制。
      */
     public boolean setControl(String taskId, String value, int ttlSeconds) {
         try {
@@ -46,8 +44,8 @@ public class TaskControlRedis {
                     Duration.ofSeconds(Math.max(60, ttlSeconds)));
             return true;
         } catch (Exception ex) {
-            log.error("Redis setControl failed taskId={} (degraded)", taskId, ex);
-            return false;
+            log.error("Redis setControl failed taskId={}", taskId, ex);
+            throw new IllegalStateException("task control storage unavailable", ex);
         }
     }
 
@@ -57,7 +55,7 @@ public class TaskControlRedis {
             return v == null ? CONTROL_RUNNING : v;
         } catch (Exception ex) {
             log.error("Redis getControl failed taskId={}", taskId, ex);
-            return CONTROL_RUNNING;
+            return CONTROL_CANCELLED;
         }
     }
 

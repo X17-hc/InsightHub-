@@ -79,6 +79,8 @@ class ResearchTaskServiceImplTest {
     private ObjectMapper objectMapper;
     @Mock
     private ResearchTaskMapper researchTaskMapper;
+    @Mock
+    private ResearchTaskQueryService taskQueryService;
 
     @InjectMocks
     private ResearchTaskServiceImpl service;
@@ -111,11 +113,6 @@ class ResearchTaskServiceImplTest {
 
     @Test
     void getReportReturnsLatestReport() {
-        ResearchTask task = new ResearchTask();
-        task.setId("task-1");
-        task.setWorkspaceId("workspace-1");
-        when(researchTaskMapper.findByIdAndWorkspace("task-1", "workspace-1")).thenReturn(task);
-
         LocalDateTime now = LocalDateTime.now();
         Report report = new Report();
         report.setId("report-2");
@@ -127,23 +124,23 @@ class ResearchTaskServiceImplTest {
         report.setStatus("READY");
         report.setCreatedAt(now.minusMinutes(1));
         report.setUpdatedAt(now);
-        when(reportMapper.findLatestByTaskAndWorkspace("task-1", "workspace-1")).thenReturn(report);
+        ReportResponse expected = new ReportResponse(
+                report.getId(), report.getTaskId(), report.getWorkspaceId(), report.getVersion(),
+                report.getTitle(), report.getMarkdownContent(), report.getStatus(), report.getCreatedAt(), report.getUpdatedAt());
+        when(taskQueryService.getReport("workspace-1", "task-1")).thenReturn(expected);
 
         ReportResponse response = service.getReport("workspace-1", "task-1");
 
         assertEquals("report-2", response.getId());
         assertEquals(2, response.getVersion());
         assertEquals("# Research result", response.getMarkdownContent());
-        verify(accessService).requireMember("workspace-1", "user-1");
+        verify(taskQueryService).getReport("workspace-1", "task-1");
     }
 
     @Test
     void getReportReturnsNotFoundWhenNoReportExists() {
-        ResearchTask task = new ResearchTask();
-        task.setId("task-1");
-        task.setWorkspaceId("workspace-1");
-        when(researchTaskMapper.findByIdAndWorkspace("task-1", "workspace-1")).thenReturn(task);
-        when(reportMapper.findLatestByTaskAndWorkspace("task-1", "workspace-1")).thenReturn(null);
+        when(taskQueryService.getReport("workspace-1", "task-1"))
+                .thenThrow(BusinessException.notFound("report not found"));
 
         BusinessException exception = assertThrows(
                 BusinessException.class,

@@ -75,6 +75,7 @@ export interface TaskControl {
 }
 
 export interface TaskEvent {
+  schemaVersion?: string
   eventId: number
   taskId: string
   runId?: string

@@ -1,6 +1,7 @@
 package com.hechang.insighthub.service.impl;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
@@ -47,12 +48,10 @@ class TaskStreamLeaseTest {
     }
 
     @Test
-    void redisFailureFallsBackToCurrentLocalToken() {
+    void redisFailureRejectsNewLease() {
         when(redisTemplate.opsForValue()).thenThrow(new IllegalStateException("redis down"));
         TaskStreamLease localLease = new TaskStreamLease(redisTemplate);
 
-        String token = localLease.acquire("task-3");
-
-        assertTrue(localLease.isCurrent("task-3", token));
+        assertThrows(IllegalStateException.class, () -> localLease.acquire("task-3"));
     }
 }

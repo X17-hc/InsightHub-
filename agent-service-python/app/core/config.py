@@ -1,6 +1,7 @@
 """应用配置：从环境变量 / 项目根 .env 加载。"""
 
 from functools import lru_cache
+import os
 from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -66,4 +67,10 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     """返回缓存的 Settings 单例。"""
-    return Settings()
+    settings = Settings()
+    # Secrets must be explicitly present in the process environment. This keeps
+    # test isolation reliable and prevents a file-based fallback from silently
+    # enabling internal APIs when the deployment omitted the secret.
+    if "AGENT_INTERNAL_TOKEN" not in os.environ:
+        settings.agent_internal_token = ""
+    return settings

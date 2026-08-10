@@ -2,15 +2,13 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import time
-import uuid
 from collections.abc import Iterator
 from typing import Any
 
 from app.core.config import get_settings
-from app.graph.builder import delete_thread_checkpoint, get_compiled_graph
+from app.graph.builder import get_compiled_graph
 from app.graph.events import make_event
 from app.schemas.protocol import (
     AgentError,
@@ -25,14 +23,16 @@ from app.services.control import (
     get_control_store,
 )
 from app.services.execution_lease import TaskExecutionConflict, hold_task_execution
+from app.services.checkpoint_service import checkpoint_values, patch_control_event as _persist_control_event, reset_checkpoint
+from app.services.event_service import dumps_event as _dumps_event, task_result_line as _task_result_line
+from app.services.task_response_builder import response_from_state
+from app.services.execution_context import ExecutionContext
 
 logger = logging.getLogger(__name__)
 
-
 def _build_init_state(
     request: AgentTaskRequest,
-    run_id: str,
-    trace: str,
+    context: ExecutionContext,
     initial_events: list[dict[str, Any]],
 ) -> dict[str, Any]:
     """构造图初始状态。"""
@@ -40,8 +40,8 @@ def _build_init_state(
         "task_id": request.task_id,
         "workspace_id": request.workspace_id,
         "user_id": request.user_id,
-        "run_id": run_id,
-        "trace_id": trace,
+        "run_id": context.run_id,
+        "trace_id": context.trace_id,
         "user_query": request.query,
         "clarified_query": None,
         "plan": None,
@@ -55,7 +55,7 @@ def _build_init_state(
         "step_count": 0,
         "retry_count": 0,
         "max_steps": request.config.max_steps,
-        "deadline_at": time.time() + max(1, int(request.config.timeout_seconds or 300)),
+        "deadline_at": context.deadline_at,
         "enable_web_search": request.config.enable_web_search,
         "knowledge_base_ids": list(request.knowledge_base_ids or []),
         "citations": [],
@@ -63,33 +63,6 @@ def _build_init_state(
         "status": "RUNNING",
         "events": initial_events,
     }
-
-
-def _dumps_event(event: dict[str, Any]) -> str:
-    """事件 dict → NDJSON 行。"""
-    return json.dumps(event, ensure_ascii=False)
-
-
-def _task_result_line(
-    *,
-    task_id: str,
-    run_id: str,
-    status: str,
-    report_markdown: str | None,
-    error: dict[str, Any] | None,
-    citations: list[dict[str, Any]] | None = None,
-) -> str:
-    """终态摘要行（type=TASK_RESULT）。"""
-    payload = {
-        "type": "TASK_RESULT",
-        "taskId": task_id,
-        "runId": run_id,
-        "status": status,
-        "reportMarkdown": report_markdown,
-        "citations": citations or [],
-        "error": error,
-    }
-    return json.dumps(payload, ensure_ascii=False)
 
 
 def run_research_task(request: AgentTaskRequest, trace_id: str | None = None) -> AgentTaskResponse:
@@ -103,8 +76,9 @@ def run_research_task(request: AgentTaskRequest, trace_id: str | None = None) ->
     Returns:
         AgentTaskResponse（COMPLETED 或 FAILED）。
     """
-    run_id = f"run-{uuid.uuid4().hex[:12]}"
-    trace = trace_id or f"trace-{uuid.uuid4().hex[:12]}"
+    context = ExecutionContext.create(request, trace_id)
+    run_id = context.run_id
+    trace = context.trace_id
     graph = get_compiled_graph()
 
     initial_events = [
@@ -117,10 +91,10 @@ def run_research_task(request: AgentTaskRequest, trace_id: str | None = None) ->
             data={"traceId": trace, "query": request.query},
         )
     ]
-    init_state = _build_init_state(request, run_id, trace, initial_events)
+    init_state = _build_init_state(request, context, initial_events)
 
     try:
-        with hold_task_execution(request.task_id, request.config.timeout_seconds + 600):
+        with hold_task_execution(request.task_id, context.timeout_seconds + 600):
             final_state = graph.invoke(
                 init_state,
                 config={"configurable": {"thread_id": request.task_id}},
@@ -164,55 +138,7 @@ def run_research_task(request: AgentTaskRequest, trace_id: str | None = None) ->
             ),
         )
 
-    return _response_from_state(request.task_id, run_id, trace, final_state)
-
-
-def _response_from_state(
-    task_id: str,
-    run_id: str,
-    trace: str,
-    final_state: dict[str, Any],
-) -> AgentTaskResponse:
-    """从终态组装同步响应。"""
-    events_raw = list(final_state.get("events") or [])
-    status = final_state.get("status") or ("COMPLETED" if final_state.get("report") else "FAILED")
-    if status == "FAILED" or not final_state.get("report"):
-        errors = final_state.get("errors") or [{"code": "UNKNOWN", "message": "no report"}]
-        err0 = errors[0]
-        if not any(e.get("type") == "TASK_FAILED" for e in events_raw):
-            events_raw.append(
-                make_event(
-                    events=events_raw,
-                    task_id=task_id,
-                    run_id=run_id,
-                    event_type="TASK_FAILED",
-                    data=err0,
-                )
-            )
-        return AgentTaskResponse(
-            taskId=task_id,
-            runId=run_id,
-            status="FAILED",
-            reportMarkdown=final_state.get("report"),
-            events=[AgentEvent.model_validate(e) for e in events_raw],
-            citations=list(final_state.get("citations") or []),
-            error=AgentError(
-                code=str(err0.get("code") or "AGENT_EXECUTION_FAILED"),
-                message=str(err0.get("message") or "task failed"),
-                traceId=trace,
-                details=err0 if isinstance(err0, dict) else {},
-            ),
-        )
-
-    return AgentTaskResponse(
-        taskId=task_id,
-        runId=run_id,
-        status="COMPLETED",
-        reportMarkdown=final_state.get("report"),
-        events=[AgentEvent.model_validate(e) for e in events_raw],
-        citations=list(final_state.get("citations") or []),
-        error=None,
-    )
+    return response_from_state(request.task_id, run_id, trace, final_state)
 
 
 def stream_research_task(
@@ -225,9 +151,10 @@ def stream_research_task(
     Yields:
         NDJSON 文本行（不含换行符由调用方拼接）。
     """
-    run_id = f"run-{uuid.uuid4().hex[:12]}"
-    trace = trace_id or f"trace-{uuid.uuid4().hex[:12]}"
-    timeout = max(1, int(request.config.timeout_seconds or 300))
+    context = ExecutionContext.create(request, trace_id)
+    run_id = context.run_id
+    trace = context.trace_id
+    timeout = context.timeout_seconds
     store = get_control_store()
     # 仅在无控制字时初始化为 RUNNING，避免覆盖调用方已写入的 PAUSED/CANCELLED
     if not store.exists(request.task_id):
@@ -239,7 +166,7 @@ def stream_research_task(
             seed_events: list[dict[str, Any]] = []
             next_eid = request.config.next_event_id
             if next_eid is not None and int(next_eid) > 1:
-                delete_thread_checkpoint(request.task_id)
+                reset_checkpoint(request.task_id)
                 seed_events = [{"eventId": int(next_eid) - 1}]
 
             started = make_event(
@@ -252,7 +179,7 @@ def stream_research_task(
             )
             yield _dumps_event(started)
 
-            init_state = _build_init_state(request, run_id, trace, [started])
+            init_state = _build_init_state(request, context, [started])
             yield from _stream_graph(
                 task_id=request.task_id,
                 run_id=run_id,
@@ -287,18 +214,23 @@ def resume_research_task(
         trace_id: 可选链路 ID。
         timeout_seconds: 超时秒数。
     """
-    timeout = max(1, int(timeout_seconds))
+    context = ExecutionContext.for_resume(
+        task_id,
+        run_id=run_id,
+        trace_id=trace_id,
+        timeout_seconds=timeout_seconds,
+    )
+    timeout = context.timeout_seconds
     store = get_control_store()
     store.set(task_id, CONTROL_RUNNING, ttl_seconds=timeout + 600)
 
-    run = run_id or f"run-{uuid.uuid4().hex[:12]}"
-    trace = trace_id or f"trace-{uuid.uuid4().hex[:12]}"
+    run = context.run_id
+    trace = context.trace_id
     try:
         with hold_task_execution(task_id, timeout + 600):
             graph = get_compiled_graph()
             config = {"configurable": {"thread_id": task_id}}
-            snap = graph.get_state(config)
-            values = (snap.values if snap is not None else None) or {}
+            values = checkpoint_values(graph, task_id)
             if not values:
                 yield _task_result_line(
                     task_id=task_id,
@@ -308,12 +240,15 @@ def resume_research_task(
                     error={"code": "NO_CHECKPOINT", "message": "checkpoint not found", "traceId": trace},
                 )
                 return
-            run = run_id or values.get("run_id") or run
-            trace = trace_id or values.get("trace_id") or trace
-            graph.update_state(
-                config,
-                {"status": "RUNNING", "deadline_at": time.time() + timeout},
+            context = ExecutionContext.for_resume(
+                task_id,
+                run_id=run_id or values.get("run_id"),
+                trace_id=trace_id or values.get("trace_id"),
+                timeout_seconds=timeout,
             )
+            run = context.run_id
+            trace = context.trace_id
+            graph.update_state(config, {"status": "RUNNING", "deadline_at": context.deadline_at})
 
             # LangGraph：None 输入表示从 checkpoint 继续
             yield from _stream_graph(
@@ -332,27 +267,6 @@ def resume_research_task(
             report_markdown=None,
             error={"code": "TASK_ALREADY_RUNNING", "message": str(exc), "traceId": trace},
         )
-
-
-def _persist_control_event(
-    graph: Any,
-    config: dict[str, Any],
-    event: dict[str, Any],
-    *,
-    status: str | None = None,
-) -> None:
-    """
-    将控制面事件写入 MemorySaver Checkpoint。
-
-    events 字段带 reducer，只传新增事件列表，避免整表重放导致重复。
-    """
-    patch: dict[str, Any] = {"events": [event]}
-    if status is not None:
-        patch["status"] = status
-    try:
-        graph.update_state(config, patch)
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("persist control event failed type=%s: %s", event.get("type"), exc)
 
 
 def _stream_graph(

@@ -42,8 +42,8 @@ public class TaskStreamLease {
             redisTemplate.opsForValue().set(key(taskId), token, LEASE_TTL);
             localOnlyTokens.remove(taskId);
         } catch (Exception ex) {
-            localOnlyTokens.put(taskId, token);
-            log.error("stream lease acquire degraded to local taskId={}", taskId, ex);
+            log.error("stream lease unavailable taskId={}", taskId, ex);
+            throw new IllegalStateException("task stream lease unavailable", ex);
         }
         return token;
     }
@@ -61,8 +61,8 @@ public class TaskStreamLease {
             }
             return token.equals(localOnlyTokens.get(taskId));
         } catch (Exception ex) {
-            log.error("stream lease read degraded to local taskId={}", taskId, ex);
-            return token.equals(localTokens.get(taskId));
+            log.error("stream lease read failed taskId={}", taskId, ex);
+            return false;
         }
     }
 
@@ -74,8 +74,8 @@ public class TaskStreamLease {
             redisTemplate.opsForValue().set(key(taskId), tombstone, LEASE_TTL);
             localOnlyTokens.remove(taskId);
         } catch (Exception ex) {
-            localOnlyTokens.put(taskId, tombstone);
-            log.error("stream lease invalidate degraded to local taskId={}", taskId, ex);
+            log.error("stream lease invalidate failed taskId={}", taskId, ex);
+            throw new IllegalStateException("task stream lease unavailable", ex);
         }
     }
 

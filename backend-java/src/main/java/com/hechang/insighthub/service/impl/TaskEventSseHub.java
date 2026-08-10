@@ -29,6 +29,7 @@ import com.hechang.insighthub.mapper.ResearchTaskMapper;
 import com.hechang.insighthub.mapper.TaskEventMapper;
 import com.hechang.insighthub.model.entity.ResearchTask;
 import com.hechang.insighthub.model.entity.TaskEvent;
+import com.hechang.insighthub.model.enums.TaskStatus;
 import com.hechang.insighthub.redis.TaskControlRedis;
 
 /**
@@ -43,6 +44,7 @@ public class TaskEventSseHub {
     private final TaskEventMapper taskEventMapper;
     private final RedisMessageListenerContainer listenerContainer;
     private final ObjectMapper objectMapper;
+    private final TaskEventService taskEventService;
     private final TaskProperties taskProperties;
     private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(2, r -> {
         Thread t = new Thread(r, "ih-sse-scheduler");
@@ -58,11 +60,13 @@ public class TaskEventSseHub {
             TaskEventMapper taskEventMapper,
             RedisMessageListenerContainer listenerContainer,
             ObjectMapper objectMapper,
+            TaskEventService taskEventService,
             TaskProperties taskProperties) {
         this.researchTaskMapper = researchTaskMapper;
         this.taskEventMapper = taskEventMapper;
         this.listenerContainer = listenerContainer;
         this.objectMapper = objectMapper;
+        this.taskEventService = taskEventService;
         this.taskProperties = taskProperties;
     }
 
@@ -268,30 +272,11 @@ public class TaskEventSseHub {
     }
 
     private String toClientJson(String taskId, TaskEvent row) {
-        try {
-            Map<String, Object> data = row.getPayloadJson() == null || row.getPayloadJson().isBlank()
-                    ? Map.of()
-                    : objectMapper.readValue(row.getPayloadJson(), Map.class);
-            Map<String, Object> body = new java.util.LinkedHashMap<>();
-            body.put("eventId", row.getEventNo());
-            body.put("taskId", taskId);
-            body.put("runId", row.getRunId());
-            body.put("node", row.getNodeName());
-            body.put("type", row.getEventType());
-            body.put("timestamp", row.getCreatedAt() == null
-                    ? null
-                    : row.getCreatedAt().toInstant(ZoneOffset.UTC).toString());
-            body.put("data", data);
-            return objectMapper.writeValueAsString(body);
-        } catch (Exception ex) {
-            return "{\"eventId\":" + row.getEventNo() + ",\"type\":\"" + row.getEventType() + "\"}";
-        }
+        return taskEventService.toClientJson(taskId, row);
     }
 
     private static boolean isTerminal(String status) {
-        return "COMPLETED".equalsIgnoreCase(status)
-                || "FAILED".equalsIgnoreCase(status)
-                || "CANCELLED".equalsIgnoreCase(status);
+        return TaskStatus.isTerminal(status);
     }
 
     private static void completeQuietly(SseEmitter emitter) {
