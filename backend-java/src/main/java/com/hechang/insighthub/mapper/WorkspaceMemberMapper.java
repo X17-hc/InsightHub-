@@ -2,7 +2,6 @@ package com.hechang.insighthub.mapper;
 
 import java.util.List;
 
-import org.apache.ibatis.annotations.Delete;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
@@ -16,35 +15,6 @@ import com.mybatisflex.core.BaseMapper;
  */
 @Mapper
 public interface WorkspaceMemberMapper extends BaseMapper<WorkspaceMember> {
-
-    /** 查询成员角色 */
-    @Select("""
-            SELECT role FROM workspace_member
-            WHERE workspace_id = #{workspaceId} AND user_id = #{userId}
-            """)
-    String selectRole(@Param("workspaceId") String workspaceId, @Param("userId") String userId);
-
-    /** 统计工作空间内是否存在该用户 */
-    @Select("""
-            SELECT COUNT(*) FROM workspace_member
-            WHERE workspace_id = #{workspaceId} AND user_id = #{userId}
-            """)
-    long countByWorkspaceAndUser(@Param("workspaceId") String workspaceId, @Param("userId") String userId);
-
-    /** 统计 OWNER 数量（移除所有者前校验） */
-    @Select("""
-            SELECT COUNT(*) FROM workspace_member
-            WHERE workspace_id = #{workspaceId} AND role = 'OWNER'
-            """)
-    long countOwners(@Param("workspaceId") String workspaceId);
-
-    /** 按工作空间与用户删除成员关系 */
-    @Delete("""
-            DELETE FROM workspace_member
-            WHERE workspace_id = #{workspaceId} AND user_id = #{userId}
-            """)
-    int deleteByWorkspaceAndUser(@Param("workspaceId") String workspaceId, @Param("userId") String userId);
-
     /**
      * 列出工作空间成员（JOIN sys_user，字段对齐 MemberResponse）。
      *

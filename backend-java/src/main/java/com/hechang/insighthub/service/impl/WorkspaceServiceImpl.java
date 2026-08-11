@@ -20,6 +20,7 @@ import com.hechang.insighthub.model.enums.WorkspaceRole;
 import com.hechang.insighthub.security.SecurityUtils;
 import com.hechang.insighthub.service.WorkspaceAccessService;
 import com.hechang.insighthub.service.WorkspaceService;
+import com.mybatisflex.core.query.QueryWrapper;
 import com.mybatisflex.spring.service.impl.ServiceImpl;
 
 /**
@@ -99,7 +100,9 @@ public class WorkspaceServiceImpl extends ServiceImpl<WorkspaceMapper, Workspace
         if (userMapper.selectOneById(request.getUserId()) == null) {
             throw BusinessException.notFound("user not found");
         }
-        if (memberMapper.countByWorkspaceAndUser(workspaceId, request.getUserId()) > 0) {
+        if (memberMapper.selectCountByQuery(QueryWrapper.create()
+                .eq(WorkspaceMember::getWorkspaceId, workspaceId)
+                .eq(WorkspaceMember::getUserId, request.getUserId())) > 0) {
             throw BusinessException.conflict("MEMBER_EXISTS", "user already in workspace");
         }
         WorkspaceRole role;
@@ -134,17 +137,24 @@ public class WorkspaceServiceImpl extends ServiceImpl<WorkspaceMapper, Workspace
         if (workspace != null && targetUserId.equals(workspace.getOwnerId())) {
             throw BusinessException.conflict("PRIMARY_OWNER", "primary owner cannot be removed");
         }
-        String role = memberMapper.selectRole(workspaceId, targetUserId);
-        if (role == null) {
+        WorkspaceMember targetMember = memberMapper.selectOneByQuery(QueryWrapper.create()
+                .eq(WorkspaceMember::getWorkspaceId, workspaceId)
+                .eq(WorkspaceMember::getUserId, targetUserId));
+        if (targetMember == null) {
             throw BusinessException.notFound("member not found");
         }
-        if ("OWNER".equals(role) && memberMapper.countOwners(workspaceId) <= 1) {
+        String role = targetMember.getRole();
+        if ("OWNER".equals(role) && memberMapper.selectCountByQuery(QueryWrapper.create()
+                .eq(WorkspaceMember::getWorkspaceId, workspaceId)
+                .eq(WorkspaceMember::getRole, WorkspaceRole.OWNER.name())) <= 1) {
             throw BusinessException.conflict("LAST_OWNER", "cannot remove the last owner");
         }
         if ("OWNER".equals(role) && actorRole != WorkspaceRole.OWNER) {
             throw BusinessException.forbidden("only owner can remove another owner");
         }
-        memberMapper.deleteByWorkspaceAndUser(workspaceId, targetUserId);
+        memberMapper.deleteByQuery(QueryWrapper.create()
+                .eq(WorkspaceMember::getWorkspaceId, workspaceId)
+                .eq(WorkspaceMember::getUserId, targetUserId));
     }
 
     private WorkspaceResponse toResponse(Workspace row) {

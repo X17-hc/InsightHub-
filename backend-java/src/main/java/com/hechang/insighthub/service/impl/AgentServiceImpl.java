@@ -16,7 +16,9 @@ import com.hechang.insighthub.model.entity.AgentDefinition;
 import com.hechang.insighthub.security.SecurityUtils;
 import com.hechang.insighthub.service.AgentService;
 import com.hechang.insighthub.service.WorkspaceAccessService;
+import com.mybatisflex.core.query.QueryWrapper;
 import com.mybatisflex.spring.service.impl.ServiceImpl;
+import com.mybatisflex.core.update.UpdateChain;
 
 /**
  * Agent 配置业务实现。
@@ -39,7 +41,11 @@ public class AgentServiceImpl extends ServiceImpl<AgentDefinitionMapper, AgentDe
     public List<AgentResponse> list(String workspaceId) {
         String userId = SecurityUtils.requireUserId();
         accessService.requireMember(workspaceId, userId);
-        return mapper.listByWorkspace(workspaceId).stream().map(this::toResponse).toList();
+        return list(QueryWrapper.create()
+                .eq(AgentDefinition::getWorkspaceId, workspaceId)
+                .orderBy(AgentDefinition::getAgentType, true)
+                .orderBy(AgentDefinition::getName, true))
+                .stream().map(this::toResponse).toList();
     }
 
     @Override
@@ -69,7 +75,7 @@ public class AgentServiceImpl extends ServiceImpl<AgentDefinitionMapper, AgentDe
         entity.setVersion(1);
         save(entity);
 
-        return toResponse(mapper.findByIdAndWorkspace(id, workspaceId));
+        return toResponse(findAgent(workspaceId, id));
     }
 
     @Override
@@ -77,16 +83,19 @@ public class AgentServiceImpl extends ServiceImpl<AgentDefinitionMapper, AgentDe
     public AgentResponse update(String workspaceId, String agentId, UpdateAgentRequest request) {
         String userId = SecurityUtils.requireUserId();
         accessService.requireAdmin(workspaceId, userId);
-        if (mapper.findByIdAndWorkspace(agentId, workspaceId) == null) {
+        if (findAgent(workspaceId, agentId) == null) {
             throw BusinessException.notFound("agent not found");
         }
-        mapper.updateBasic(
-                agentId,
-                workspaceId,
-                request.getName(),
-                request.getSystemPrompt(),
-                request.getPromptVersion());
-        return toResponse(mapper.findByIdAndWorkspace(agentId, workspaceId));
+        UpdateChain.of(mapper)
+                .set(AgentDefinition::getName, request.getName())
+                .set(AgentDefinition::getSystemPrompt, request.getSystemPrompt())
+                .set(AgentDefinition::getPromptVersion, request.getPromptVersion())
+                .setRaw(AgentDefinition::getVersion, "version + 1")
+                .setRaw(AgentDefinition::getUpdatedAt, "NOW()")
+                .eq(AgentDefinition::getId, agentId)
+                .eq(AgentDefinition::getWorkspaceId, workspaceId)
+                .update();
+        return toResponse(findAgent(workspaceId, agentId));
     }
 
     @Override
@@ -94,11 +103,22 @@ public class AgentServiceImpl extends ServiceImpl<AgentDefinitionMapper, AgentDe
     public AgentResponse enable(String workspaceId, String agentId, boolean enabled) {
         String userId = SecurityUtils.requireUserId();
         accessService.requireAdmin(workspaceId, userId);
-        if (mapper.findByIdAndWorkspace(agentId, workspaceId) == null) {
+        if (findAgent(workspaceId, agentId) == null) {
             throw BusinessException.notFound("agent not found");
         }
-        mapper.updateEnabled(agentId, workspaceId, enabled ? 1 : 0);
-        return toResponse(mapper.findByIdAndWorkspace(agentId, workspaceId));
+        UpdateChain.of(mapper)
+                .set(AgentDefinition::getEnabled, enabled ? 1 : 0)
+                .setRaw(AgentDefinition::getUpdatedAt, "NOW()")
+                .eq(AgentDefinition::getId, agentId)
+                .eq(AgentDefinition::getWorkspaceId, workspaceId)
+                .update();
+        return toResponse(findAgent(workspaceId, agentId));
+    }
+
+    private AgentDefinition findAgent(String workspaceId, String agentId) {
+        return getOne(QueryWrapper.create()
+                .eq(AgentDefinition::getId, agentId)
+                .eq(AgentDefinition::getWorkspaceId, workspaceId));
     }
 
     private AgentResponse toResponse(AgentDefinition row) {

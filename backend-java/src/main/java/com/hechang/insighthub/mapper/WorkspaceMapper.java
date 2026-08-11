@@ -37,8 +37,4 @@ public interface WorkspaceMapper extends BaseMapper<Workspace> {
             ORDER BY w.created_at DESC
             """)
     List<Workspace> listByUserId(@Param("userId") String userId);
-
-    /** 查询工作空间最大并发任务数 */
-    @Select("SELECT max_concurrent_tasks AS maxConcurrentTasks FROM workspace WHERE id = #{workspaceId}")
-    Integer selectMaxConcurrentTasks(@Param("workspaceId") String workspaceId);
 }

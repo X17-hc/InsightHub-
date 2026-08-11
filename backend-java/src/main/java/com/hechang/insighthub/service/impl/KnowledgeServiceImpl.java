@@ -34,7 +34,9 @@ import com.hechang.insighthub.model.entity.KnowledgeBase;
 import com.hechang.insighthub.security.SecurityUtils;
 import com.hechang.insighthub.service.KnowledgeService;
 import com.hechang.insighthub.service.WorkspaceAccessService;
+import com.mybatisflex.core.query.QueryWrapper;
 import com.mybatisflex.spring.service.impl.ServiceImpl;
+import com.mybatisflex.core.update.UpdateChain;
 
 /**
  * 知识库与文档业务实现。
@@ -93,14 +95,17 @@ public class KnowledgeServiceImpl extends ServiceImpl<KnowledgeBaseMapper, Knowl
         entity.setCreatedBy(userId);
         save(entity);
 
-        return toKbResponse(mapper.findByIdAndWorkspace(id, workspaceId));
+        return toKbResponse(requireKb(workspaceId, id));
     }
 
     @Override
     public List<KnowledgeBaseResponse> list(String workspaceId) {
         String userId = SecurityUtils.requireUserId();
         accessService.requireMember(workspaceId, userId);
-        return mapper.listByWorkspace(workspaceId).stream().map(this::toKbResponse).toList();
+        return list(QueryWrapper.create()
+                .eq(KnowledgeBase::getWorkspaceId, workspaceId)
+                .orderBy(KnowledgeBase::getCreatedAt, false))
+                .stream().map(this::toKbResponse).toList();
     }
 
     @Override
@@ -118,14 +123,14 @@ public class KnowledgeServiceImpl extends ServiceImpl<KnowledgeBaseMapper, Knowl
         accessService.requireAdmin(workspaceId, userId);
         requireKb(workspaceId, kbId);
 
-        mapper.updateStatus(kbId, workspaceId, STATUS_DISABLED);
+        updateKnowledgeBaseStatus(kbId, workspaceId, STATUS_DISABLED);
         try {
             ingestClient.deleteChunksByKb(workspaceId, kbId);
         } catch (Exception ex) {
             // 元数据已禁用；向量清理失败记日志，避免阻塞禁用流程
             log.warn("delete-by-kb failed workspaceId={} kbId={}", workspaceId, kbId, ex);
         }
-        return toKbResponse(mapper.findByIdAndWorkspace(kbId, workspaceId));
+        return toKbResponse(requireKb(workspaceId, kbId));
     }
 
     @Override
@@ -168,7 +173,9 @@ public class KnowledgeServiceImpl extends ServiceImpl<KnowledgeBaseMapper, Knowl
         }
         String contentHash = sha256Hex(bytes);
 
-        KbDocument dup = documentMapper.findByHash(kbId, contentHash);
+        KbDocument dup = documentMapper.selectOneByQuery(QueryWrapper.create()
+                .eq(KbDocument::getKnowledgeBaseId, kbId)
+                .eq(KbDocument::getContentHash, contentHash));
         if (dup != null) {
             throw BusinessException.conflict(
                     "DUPLICATE_DOCUMENT",
@@ -208,12 +215,14 @@ public class KnowledgeServiceImpl extends ServiceImpl<KnowledgeBaseMapper, Knowl
         doc.setUploadedBy(userId);
         documentMapper.insert(doc);
 
-        int count = documentMapper.countByKb(kbId, workspaceId);
-        mapper.updateDocCount(kbId, workspaceId, count);
+        int count = Math.toIntExact(documentMapper.selectCountByQuery(QueryWrapper.create()
+                .eq(KbDocument::getKnowledgeBaseId, kbId)
+                .eq(KbDocument::getWorkspaceId, workspaceId)));
+        updateKnowledgeBaseDocCount(kbId, workspaceId, count);
 
         // 必须在事务提交后再异步入库，否则线程读不到未提交行
         scheduleIngestAfterCommit(workspaceId, kbId, docId);
-        return toDocResponse(documentMapper.findByIdAndWorkspace(docId, workspaceId));
+        return toDocResponse(requireDoc(workspaceId, kbId, docId));
     }
 
     @Override
@@ -221,7 +230,11 @@ public class KnowledgeServiceImpl extends ServiceImpl<KnowledgeBaseMapper, Knowl
         String userId = SecurityUtils.requireUserId();
         accessService.requireMember(workspaceId, userId);
         requireKb(workspaceId, kbId);
-        return documentMapper.listByKb(kbId, workspaceId).stream().map(this::toDocResponse).toList();
+        return documentMapper.selectListByQuery(QueryWrapper.create()
+                .eq(KbDocument::getKnowledgeBaseId, kbId)
+                .eq(KbDocument::getWorkspaceId, workspaceId)
+                .orderBy(KbDocument::getCreatedAt, false))
+                .stream().map(this::toDocResponse).toList();
     }
 
     @Override
@@ -242,9 +255,9 @@ public class KnowledgeServiceImpl extends ServiceImpl<KnowledgeBaseMapper, Knowl
             throw BusinessException.conflict("KB_DISABLED", "knowledge base is disabled");
         }
         KbDocument doc = requireDoc(workspaceId, kbId, docId);
-        documentMapper.updateParseStatus(doc.getId(), workspaceId, PARSE_PENDING, doc.getChunkCount(), null);
+        updateDocumentParseStatus(doc.getId(), workspaceId, PARSE_PENDING, doc.getChunkCount(), null);
         scheduleIngestAfterCommit(workspaceId, kbId, docId);
-        return toDocResponse(documentMapper.findByIdAndWorkspace(docId, workspaceId));
+        return toDocResponse(requireDoc(workspaceId, kbId, docId));
     }
 
     /** 事务提交后再触发 @Async ingest，避免读不到未提交文档 */
@@ -264,7 +277,7 @@ public class KnowledgeServiceImpl extends ServiceImpl<KnowledgeBaseMapper, Knowl
     @Override
     @Async("taskExecutor")
     public void ingestDocument(String workspaceId, String kbId, String documentId) {
-        KbDocument doc = documentMapper.findByIdAndWorkspace(documentId, workspaceId);
+        KbDocument doc = findDocument(workspaceId, documentId);
         if (doc == null || !kbId.equals(doc.getKnowledgeBaseId())) {
             log.warn("ingest skip: document not found documentId={} workspaceId={}", documentId, workspaceId);
             return;
@@ -275,8 +288,7 @@ public class KnowledgeServiceImpl extends ServiceImpl<KnowledgeBaseMapper, Knowl
             return;
         }
 
-        documentMapper.updateParseStatus(
-                documentId, workspaceId, PARSE_PARSING, doc.getChunkCount(), null);
+        updateDocumentParseStatus(documentId, workspaceId, PARSE_PARSING, doc.getChunkCount(), null);
         try {
             KnowledgeIngestClient.IngestDocumentResponse result = ingestClient.ingestDocument(
                     workspaceId,
@@ -286,19 +298,21 @@ public class KnowledgeServiceImpl extends ServiceImpl<KnowledgeBaseMapper, Knowl
                     doc.getContentType(),
                     doc.getFileName());
             int chunkCount = result == null ? 0 : result.getChunkCount();
-            documentMapper.updateParseStatus(documentId, workspaceId, PARSE_INDEXED, chunkCount, null);
+            updateDocumentParseStatus(documentId, workspaceId, PARSE_INDEXED, chunkCount, null);
         } catch (Exception ex) {
             String msg = ex.getMessage() == null ? "ingest failed" : ex.getMessage();
             if (msg.length() > 1000) {
                 msg = msg.substring(0, 1000);
             }
             log.warn("ingest failed documentId={}", documentId, ex);
-            documentMapper.updateParseStatus(documentId, workspaceId, PARSE_FAILED, 0, msg);
+            updateDocumentParseStatus(documentId, workspaceId, PARSE_FAILED, 0, msg);
         }
     }
 
     private KnowledgeBase requireKb(String workspaceId, String kbId) {
-        KnowledgeBase kb = mapper.findByIdAndWorkspace(kbId, workspaceId);
+        KnowledgeBase kb = getOne(QueryWrapper.create()
+                .eq(KnowledgeBase::getId, kbId)
+                .eq(KnowledgeBase::getWorkspaceId, workspaceId));
         if (kb == null) {
             throw BusinessException.notFound("knowledge base not found");
         }
@@ -306,13 +320,48 @@ public class KnowledgeServiceImpl extends ServiceImpl<KnowledgeBaseMapper, Knowl
     }
 
     private KbDocument requireDoc(String workspaceId, String kbId, String docId) {
-        KbDocument doc = documentMapper.findByIdAndWorkspace(docId, workspaceId);
+        KbDocument doc = findDocument(workspaceId, docId);
         if (doc == null || !kbId.equals(doc.getKnowledgeBaseId())) {
             throw BusinessException.notFound("document not found");
         }
         return doc;
     }
 
+    private KbDocument findDocument(String workspaceId, String documentId) {
+        return documentMapper.selectOneByQuery(QueryWrapper.create()
+                .eq(KbDocument::getId, documentId)
+                .eq(KbDocument::getWorkspaceId, workspaceId));
+    }
+
+    private void updateDocumentParseStatus(
+            String documentId, String workspaceId, String parseStatus, Integer chunkCount, String errorMessage) {
+        UpdateChain.of(documentMapper)
+                .set(KbDocument::getParseStatus, parseStatus)
+                .set(KbDocument::getChunkCount, chunkCount)
+                .set(KbDocument::getErrorMessage, errorMessage)
+                .setRaw(KbDocument::getUpdatedAt, "NOW()")
+                .eq(KbDocument::getId, documentId)
+                .eq(KbDocument::getWorkspaceId, workspaceId)
+                .update();
+    }
+
+    private void updateKnowledgeBaseStatus(String kbId, String workspaceId, String status) {
+        UpdateChain.of(mapper)
+                .set(KnowledgeBase::getStatus, status)
+                .setRaw(KnowledgeBase::getUpdatedAt, "NOW()")
+                .eq(KnowledgeBase::getId, kbId)
+                .eq(KnowledgeBase::getWorkspaceId, workspaceId)
+                .update();
+    }
+
+    private void updateKnowledgeBaseDocCount(String kbId, String workspaceId, int docCount) {
+        UpdateChain.of(mapper)
+                .set(KnowledgeBase::getDocCount, docCount)
+                .setRaw(KnowledgeBase::getUpdatedAt, "NOW()")
+                .eq(KnowledgeBase::getId, kbId)
+                .eq(KnowledgeBase::getWorkspaceId, workspaceId)
+                .update();
+    }
     private KnowledgeBaseResponse toKbResponse(KnowledgeBase row) {
         return new KnowledgeBaseResponse(
                 row.getId(),

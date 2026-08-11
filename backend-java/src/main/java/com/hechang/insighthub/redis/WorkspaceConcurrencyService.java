@@ -11,6 +11,7 @@ import org.springframework.stereotype.Service;
 import com.hechang.insighthub.exception.BusinessException;
 import com.hechang.insighthub.exception.ErrorCode;
 import com.hechang.insighthub.mapper.WorkspaceMapper;
+import com.hechang.insighthub.model.entity.Workspace;
 
 /**
  * 工作空间并发槽（Redisson Semaphore）。
@@ -40,7 +41,8 @@ public class WorkspaceConcurrencyService {
      */
     public String tryAcquire(String workspaceId, int leaseSeconds) {
         try {
-            Integer max = workspaceMapper.selectMaxConcurrentTasks(workspaceId);
+            Workspace workspace = workspaceMapper.selectOneById(workspaceId);
+            Integer max = workspace == null ? null : workspace.getMaxConcurrentTasks();
             int permits = max == null || max < 1 ? 1 : max;
             RPermitExpirableSemaphore sem = redissonClient.getPermitExpirableSemaphore(key(workspaceId));
             // 首次设置 permits；已存在则忽略

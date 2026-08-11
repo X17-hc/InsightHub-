@@ -104,7 +104,7 @@ public class TaskExecutionServiceImpl implements TaskExecutionService {
                         taskId, null, traceId, timeout,
                         node -> handleLine(taskId, workspaceId, node, badLines, generation));
             } else {
-                long nextEventId = taskEventMapper.maxEventNo(taskId) + 1;
+                long nextEventId = taskEventService.maxEventNo(taskId) + 1;
                 String idem = taskId + "-stream-" + System.currentTimeMillis();
                 List<String> kbIds = parseKbIds(
                         researchTaskMapper.findByIdAndWorkspace(taskId, workspaceId));
@@ -203,7 +203,7 @@ public class TaskExecutionServiceImpl implements TaskExecutionService {
     /** 将 TASK_RESULT 规范化后落库，实时与回放使用同一种结构。 */
     private PublishedTaskResult persistTaskResult(String taskId, JsonNode node) {
         try {
-            long firstEventNo = taskEventMapper.maxEventNo(taskId) + 1;
+            long firstEventNo = taskEventService.maxEventNo(taskId) + 1;
             String status = text(node, "status");
             String runId = text(node, "runId");
             AgentEventDto dto = new AgentEventDto();

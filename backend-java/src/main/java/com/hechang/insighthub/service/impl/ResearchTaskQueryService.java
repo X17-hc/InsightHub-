@@ -17,8 +17,10 @@ import com.hechang.insighthub.model.dto.task.TaskSummaryResponse;
 import com.hechang.insighthub.model.entity.Citation;
 import com.hechang.insighthub.model.entity.Report;
 import com.hechang.insighthub.model.entity.ResearchTask;
+import com.hechang.insighthub.model.entity.TaskEvent;
 import com.hechang.insighthub.security.SecurityUtils;
 import com.hechang.insighthub.service.WorkspaceAccessService;
+import com.mybatisflex.core.query.QueryWrapper;
 
 /** 研究任务的只读查询，隔离查询 Mapper 与任务控制、执行逻辑。 */
 @Service
@@ -61,7 +63,12 @@ public class ResearchTaskQueryService {
     public ReportResponse getReport(String workspaceId, String taskId) {
         requireMembership(workspaceId);
         requireTask(workspaceId, taskId);
-        Report report = reportMapper.findLatestByTaskAndWorkspace(taskId, workspaceId);
+        Report report = reportMapper.selectOneByQuery(QueryWrapper.create()
+                .eq(Report::getTaskId, taskId)
+                .eq(Report::getWorkspaceId, workspaceId)
+                .orderBy(Report::getVersion, false)
+                .orderBy(Report::getCreatedAt, false)
+                .limit(1));
         if (report == null) throw BusinessException.notFound("report not found");
         return new ReportResponse(
                 report.getId(), report.getTaskId(), report.getWorkspaceId(), report.getVersion(),
@@ -72,7 +79,9 @@ public class ResearchTaskQueryService {
     public List<CitationResponse> listCitations(String workspaceId, String taskId) {
         requireMembership(workspaceId);
         requireTask(workspaceId, taskId);
-        return citationMapper.listByTaskId(taskId).stream()
+        return citationMapper.selectListByQuery(QueryWrapper.create()
+                .eq(Citation::getTaskId, taskId)
+                .orderBy(Citation::getCitationNo, true)).stream()
                 .map(ResearchTaskQueryService::toCitationResponse)
                 .toList();
     }
@@ -80,7 +89,10 @@ public class ResearchTaskQueryService {
     public List<TaskEventResponse> listEvents(String workspaceId, String taskId, long fromEventNo) {
         requireMembership(workspaceId);
         requireTask(workspaceId, taskId);
-        return taskEventMapper.listAfterEventNo(taskId, Math.max(0L, fromEventNo)).stream()
+        return taskEventMapper.selectListByQuery(QueryWrapper.create()
+                .eq(TaskEvent::getTaskId, taskId)
+                .gt(TaskEvent::getEventNo, Math.max(0L, fromEventNo))
+                .orderBy(TaskEvent::getEventNo, true)).stream()
                 .map(row -> taskEventService.toResponse(taskId, row))
                 .toList();
     }

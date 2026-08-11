@@ -13,6 +13,7 @@ import com.hechang.insighthub.mapper.CitationMapper;
 import com.hechang.insighthub.mapper.ReportMapper;
 import com.hechang.insighthub.model.entity.Citation;
 import com.hechang.insighthub.model.entity.Report;
+import com.mybatisflex.core.query.QueryWrapper;
 
 /** 任务最终结果持久化：报告与引用保持同一事务调用。 */
 @Service
@@ -56,7 +57,7 @@ public class TaskResultService {
         report.setStatus("READY");
         reportMapper.insert(report);
 
-        citationMapper.deleteByTaskId(taskId);
+        citationMapper.deleteByQuery(QueryWrapper.create().eq(Citation::getTaskId, taskId));
         if (citations != null && !citations.isEmpty()) {
             int index = 0;
             for (Map<String, Object> source : citations) {

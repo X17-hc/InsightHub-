@@ -6,8 +6,10 @@ import com.hechang.insighthub.exception.BusinessException;
 import com.hechang.insighthub.mapper.WorkspaceMapper;
 import com.hechang.insighthub.mapper.WorkspaceMemberMapper;
 import com.hechang.insighthub.model.entity.Workspace;
+import com.hechang.insighthub.model.entity.WorkspaceMember;
 import com.hechang.insighthub.model.enums.WorkspaceRole;
 import com.hechang.insighthub.service.WorkspaceAccessService;
+import com.mybatisflex.core.query.QueryWrapper;
 
 /**
  * 工作空间成员 / 管理员权限校验实现。
@@ -29,11 +31,13 @@ public class WorkspaceAccessServiceImpl implements WorkspaceAccessService {
         if (workspace == null || workspace.getStatus() == null || workspace.getStatus() != 1) {
             throw BusinessException.forbidden("not a member of workspace");
         }
-        String role = memberMapper.selectRole(workspaceId, userId);
-        if (role == null || role.isBlank()) {
+        WorkspaceMember member = memberMapper.selectOneByQuery(QueryWrapper.create()
+                .eq(WorkspaceMember::getWorkspaceId, workspaceId)
+                .eq(WorkspaceMember::getUserId, userId));
+        if (member == null || member.getRole() == null || member.getRole().isBlank()) {
             throw BusinessException.forbidden("not a member of workspace");
         }
-        return WorkspaceRole.from(role);
+        return WorkspaceRole.from(member.getRole());
     }
 
     @Override

@@ -32,6 +32,7 @@ import com.hechang.insighthub.model.dto.task.TaskControlResponse;
 import com.hechang.insighthub.model.dto.task.TaskEventResponse;
 import com.hechang.insighthub.model.dto.task.TaskSummaryResponse;
 import com.hechang.insighthub.model.entity.KnowledgeBase;
+import com.mybatisflex.core.query.QueryWrapper;
 import com.hechang.insighthub.model.entity.ResearchTask;
 import com.hechang.insighthub.model.enums.TaskStatus;
 import com.hechang.insighthub.model.enums.WorkspaceRole;
@@ -427,7 +428,9 @@ public class ResearchTaskServiceImpl extends ServiceImpl<ResearchTaskMapper, Res
             return;
         }
         for (String kbId : kbIds) {
-            KnowledgeBase kb = knowledgeBaseMapper.findByIdAndWorkspace(kbId, workspaceId);
+            KnowledgeBase kb = knowledgeBaseMapper.selectOneByQuery(QueryWrapper.create()
+                    .eq(KnowledgeBase::getId, kbId)
+                    .eq(KnowledgeBase::getWorkspaceId, workspaceId));
             if (kb == null) {
                 throw BusinessException.notFound("knowledge base not found: " + kbId);
             }

@@ -12,6 +12,7 @@ import com.hechang.insighthub.mapper.SysUserMapper;
 import com.hechang.insighthub.mapper.WorkspaceMapper;
 import com.hechang.insighthub.mapper.WorkspaceMemberMapper;
 import com.hechang.insighthub.model.entity.AgentDefinition;
+import com.mybatisflex.core.query.QueryWrapper;
 import com.hechang.insighthub.model.entity.SysUser;
 import com.hechang.insighthub.model.entity.Workspace;
 import com.hechang.insighthub.model.entity.WorkspaceMember;
@@ -110,7 +111,9 @@ public class DemoDataSeed implements ApplicationRunner {
             log.info("Seeded workspace {}", workspaceId);
         }
 
-        if (workspaceMemberMapper.countByWorkspaceAndUser(workspaceId, ownerId) == 0) {
+        if (workspaceMemberMapper.selectCountByQuery(QueryWrapper.create()
+                .eq(WorkspaceMember::getWorkspaceId, workspaceId)
+                .eq(WorkspaceMember::getUserId, ownerId)) == 0) {
             WorkspaceMember member = new WorkspaceMember();
             member.setId(memberId);
             member.setWorkspaceId(workspaceId);
@@ -127,7 +130,9 @@ public class DemoDataSeed implements ApplicationRunner {
     }
 
     private void seedAgent(String workspaceId, String type, String name) {
-        if (agentDefinitionMapper.countByWorkspaceAndType(workspaceId, type) > 0) {
+        if (agentDefinitionMapper.selectCountByQuery(QueryWrapper.create()
+                .eq(AgentDefinition::getWorkspaceId, workspaceId)
+                .eq(AgentDefinition::getAgentType, type)) > 0) {
             return;
         }
         String id = "agent-" + workspaceId.replace("workspace-", "") + "-" + type.toLowerCase();

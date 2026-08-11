@@ -16,6 +16,7 @@ import com.hechang.insighthub.mapper.TaskEventMapper;
 import com.hechang.insighthub.model.dto.task.AgentEventDto;
 import com.hechang.insighthub.model.dto.task.TaskEventResponse;
 import com.hechang.insighthub.model.entity.TaskEvent;
+import com.mybatisflex.core.query.QueryWrapper;
 
 /** 任务事件适配器：负责协议解析、编号去重和事件持久化。 */
 @Service
@@ -119,7 +120,7 @@ public class TaskEventService {
         data.put("hasReport", false);
 
         String payload = writeJson(data, "serialize terminal event payload failed");
-        long firstEventNo = mapper.maxEventNo(taskId) + 1;
+        long firstEventNo = maxEventNo(taskId) + 1;
         String timestamp = Instant.now().toString();
         for (int attempt = 0; attempt < 5; attempt++) {
             long eventNo = firstEventNo + attempt;
@@ -146,6 +147,13 @@ public class TaskEventService {
         } catch (RuntimeException ignored) {
             return LocalDateTime.now(ZoneOffset.UTC);
         }
+    }
+
+    public long maxEventNo(String taskId) {
+        Object value = mapper.selectObjectByQuery(QueryWrapper.create()
+                .select("COALESCE(MAX(event_no), 0)")
+                .eq(TaskEvent::getTaskId, taskId));
+        return value instanceof Number number ? number.longValue() : 0L;
     }
 
     @SuppressWarnings("unchecked")

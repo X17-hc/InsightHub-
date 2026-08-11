@@ -9,6 +9,7 @@ import org.apache.ibatis.annotations.Update;
 
 import com.hechang.insighthub.model.entity.ResearchTask;
 import com.mybatisflex.core.BaseMapper;
+import com.mybatisflex.core.query.QueryWrapper;
 
 /**
  * 研究任务 Mapper。
@@ -16,34 +17,12 @@ import com.mybatisflex.core.BaseMapper;
 @Mapper
 public interface ResearchTaskMapper extends BaseMapper<ResearchTask> {
 
-    /** 按 ID + 工作空间查询（强制租户隔离） */
-    @Select("""
-            SELECT id AS id,
-                   workspace_id AS workspaceId,
-                   creator_id AS creatorId,
-                   workflow_id AS workflowId,
-                   title AS title,
-                   query AS query,
-                   clarified_query AS clarifiedQuery,
-                   plan_json AS planJson,
-                   plan_approved AS planApproved,
-                   status AS status,
-                   current_node AS currentNode,
-                   progress AS progress,
-                   config_json AS configJson,
-                   knowledge_base_ids AS knowledgeBaseIds,
-                   trace_id AS traceId,
-                   current_run_id AS currentRunId,
-                   error_code AS errorCode,
-                   error_message AS errorMessage,
-                   started_at AS startedAt,
-                   completed_at AS completedAt,
-                   created_at AS createdAt,
-                   updated_at AS updatedAt
-            FROM research_task
-            WHERE id = #{id} AND workspace_id = #{workspaceId}
-            """)
-    ResearchTask findByIdAndWorkspace(@Param("id") String id, @Param("workspaceId") String workspaceId);
+    /** 按 ID + 工作空间查询（强制租户隔离）。 */
+    default ResearchTask findByIdAndWorkspace(String id, String workspaceId) {
+        return selectOneByQuery(QueryWrapper.create()
+                .eq(ResearchTask::getId, id)
+                .eq(ResearchTask::getWorkspaceId, workspaceId));
+    }
 
     /** 在终态事务内锁定任务行，避免暂停、取消与完成相互覆盖。 */
     @Select("""
@@ -63,35 +42,12 @@ public interface ResearchTaskMapper extends BaseMapper<ResearchTask> {
             @Param("id") String id,
             @Param("workspaceId") String workspaceId);
 
-    /** 按工作空间列出任务（创建时间倒序） */
-    @Select("""
-            SELECT id AS id,
-                   workspace_id AS workspaceId,
-                   creator_id AS creatorId,
-                   workflow_id AS workflowId,
-                   title AS title,
-                   query AS query,
-                   clarified_query AS clarifiedQuery,
-                   plan_json AS planJson,
-                   plan_approved AS planApproved,
-                   status AS status,
-                   current_node AS currentNode,
-                   progress AS progress,
-                   config_json AS configJson,
-                   knowledge_base_ids AS knowledgeBaseIds,
-                   trace_id AS traceId,
-                   current_run_id AS currentRunId,
-                   error_code AS errorCode,
-                   error_message AS errorMessage,
-                   started_at AS startedAt,
-                   completed_at AS completedAt,
-                   created_at AS createdAt,
-                   updated_at AS updatedAt
-            FROM research_task
-            WHERE workspace_id = #{workspaceId}
-            ORDER BY created_at DESC
-            """)
-    List<ResearchTask> listByWorkspace(@Param("workspaceId") String workspaceId);
+    /** 按工作空间列出任务（创建时间倒序）。 */
+    default List<ResearchTask> listByWorkspace(String workspaceId) {
+        return selectListByQuery(QueryWrapper.create()
+                .eq(ResearchTask::getWorkspaceId, workspaceId)
+                .orderBy(ResearchTask::getCreatedAt, false));
+    }
 
     /**
      * 更新任务状态；progress / current_node 为 null 时用 COALESCE 保留原值。

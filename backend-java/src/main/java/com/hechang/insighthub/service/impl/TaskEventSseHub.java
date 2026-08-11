@@ -31,6 +31,7 @@ import com.hechang.insighthub.model.entity.ResearchTask;
 import com.hechang.insighthub.model.entity.TaskEvent;
 import com.hechang.insighthub.model.enums.TaskStatus;
 import com.hechang.insighthub.redis.TaskControlRedis;
+import com.mybatisflex.core.query.QueryWrapper;
 
 /**
  * SSE 连接管理：MySQL 回放 + Redis 订阅 + DB 轮询降级 + 心跳。
@@ -95,7 +96,7 @@ public class TaskEventSseHub {
         emitter.onError(e -> cleanup.run());
 
         // 回放历史
-        List<TaskEvent> history = taskEventMapper.listAfterEventNo(taskId, fromEventNo);
+        List<TaskEvent> history = listAfterEventNo(taskId, fromEventNo);
         for (TaskEvent row : history) {
             long eventNo = row.getEventNo() == null ? 0L : row.getEventNo();
             sendEvent(session, eventNo, row.getEventType(), toClientJson(taskId, row));
@@ -184,7 +185,7 @@ public class TaskEventSseHub {
         }
         try {
             long from = session.lastSent.get();
-            List<TaskEvent> rows = taskEventMapper.listAfterEventNo(session.taskId, from);
+            List<TaskEvent> rows = listAfterEventNo(session.taskId, from);
             for (TaskEvent row : rows) {
                 long eventNo = row.getEventNo() == null ? 0L : row.getEventNo();
                 if (eventNo <= session.lastSent.get()) {
@@ -228,6 +229,13 @@ public class TaskEventSseHub {
         } else if ("TASK_FAILED".equals(type)) {
             completeQuietly(session.emitter);
         }
+    }
+
+    private List<TaskEvent> listAfterEventNo(String taskId, long fromEventNo) {
+        return taskEventMapper.selectListByQuery(QueryWrapper.create()
+                .eq(TaskEvent::getTaskId, taskId)
+                .gt(TaskEvent::getEventNo, fromEventNo)
+                .orderBy(TaskEvent::getEventNo, true));
     }
 
     private void removeSession(String taskId, EmitterSession session) {
