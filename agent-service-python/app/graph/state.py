@@ -43,3 +43,9 @@ class ResearchState(TypedDict, total=False):
     errors: list[dict[str, Any]]
     status: str
     events: Annotated[list[dict[str, Any]], _merge_events]
+
+
+    phase: str
+    plan_revision: int
+    revision_instruction: str | None
+    plan_hash: str | None

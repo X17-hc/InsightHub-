@@ -18,10 +18,19 @@ from app.agents.writer import finalize, write_report
 from app.core.config import get_settings
 from app.graph.state import ResearchState
 
+from langgraph.types import interrupt
+
+
 # Checkpoint 单例，thread_id=taskId
 _checkpointer: BaseCheckpointSaver[Any] | None = None
 _checkpoint_pool: Any | None = None
 _compiled = None
+
+
+def wait_for_approval(state: ResearchState) -> dict[str, Any]:
+    """PLAN 阶段暂停；第二天使用 Command(resume=...) 从同一节点恢复。"""
+    if state.get("phase") == "EXECUTE" and state.get("approved"):
+        return {"status": "RUNNING"}
 
 
 def _checkpoint_uri() -> str:

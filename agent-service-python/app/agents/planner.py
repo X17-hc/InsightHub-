@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from typing import Any
@@ -14,34 +15,19 @@ from app.graph.events import make_event
 from app.graph.deadline import remaining_seconds
 from app.graph.limits import claim_step
 from app.graph.state import ResearchState
+from app.schemas.protocol import Plan
 
-_PLANNER_SYSTEM = """你是 InsightHub 的 Planner Agent。
-职责：将用户研究主题拆成结构化计划。
-禁止：调用搜索、直接给出最终结论、篡改用户原始需求。
-只输出 JSON，不要 Markdown 代码块。格式：
-{
-  "title": "短标题",
-  "objective": "研究目标",
-  "tasks": [
-    {
-      "id": "task-1",
-      "type": "web_research",
-      "description": "子任务描述",
-      "dependsOn": []
-    }
-  ]
-}
-任务 type 仅允许：web_research、knowledge_research。
-若用户绑定了内部知识库，应包含至少 1 个 knowledge_research。
-要求：总共至少 1 个、最多 3 个任务。
-"""
+_PLANNER_SYSTEM = """你是 InsightHub Planner。只输出 JSON，不调用工具，不输出结论。
+格式：{"title":"...","objective":"...","tasks":[
+{"id":"task-1","type":"web_research|knowledge_research","description":"...","dependsOn":[]}
+]}
+任务至少 1 个、最多 3 个；绑定知识库时至少包含一个 knowledge_research。"""
 
 
 def _extract_json(text: str) -> dict[str, Any]:
     """从模型输出中提取 JSON 对象。"""
-    text = text.strip()
     try:
-        return json.loads(text)
+        return json.loads(text.strip())
     except json.JSONDecodeError:
         match = re.search(r"\{[\s\S]*\}", text)
         if not match:
@@ -49,9 +35,9 @@ def _extract_json(text: str) -> dict[str, Any]:
         return json.loads(match.group(0))
 
 
-def _mock_plan(query: str, *, has_kb: bool = False) -> dict[str, Any]:
+def _mock_plan(query: str, has_kb: bool) -> Plan:
     """无 LLM 时的确定性计划。"""
-    tasks: list[dict[str, Any]] = []
+    tasks = []
     if has_kb:
         tasks.append(
             {
@@ -69,11 +55,20 @@ def _mock_plan(query: str, *, has_kb: bool = False) -> dict[str, Any]:
             "dependsOn": [],
         }
     )
-    return {
-        "title": f"调研：{query[:40]}",
-        "objective": query,
-        "tasks": tasks,
-    }
+    return Plan.model_validate({"title": f"调研：{query[:40]}",
+                                "objective": query,
+                                "tasks": tasks})
+
+
+def canonical_plan_json(plan: Plan) -> str:
+    return json.dumps(plan.model_dump(by_alias=True),
+                      ensure_ascii=False,
+                      sort_keys=True,
+                      separators=(",", ":"))
+
+
+def plan_hash(plan: Plan) -> str:
+    return hashlib.sha256(canonical_plan_json(plan).encode("utf-8")).hexdigest()
 
 
 def create_plan(state: ResearchState) -> dict[str, Any]:
@@ -83,10 +78,10 @@ def create_plan(state: ResearchState) -> dict[str, Any]:
     Returns:
         状态增量（plan / events / step_count 等）。
     """
-    settings = get_settings()
-    step, limit_failure = claim_step(state, "create_plan")
-    if limit_failure is not None:
-        return limit_failure
+    step, failure = claim_step(state, "create_plan")
+    if failure is not None:
+        return failure
+
     events = list(state.get("events") or [])
     task_id = state["task_id"]
     run_id = state["run_id"]
@@ -101,45 +96,48 @@ def create_plan(state: ResearchState) -> dict[str, Any]:
     )
     events.append(started)
 
+    settings = get_settings()
+
     has_kb = bool(state.get("knowledge_base_ids"))
+
     if settings.agent_mock_llm or not settings.deepseek_api_key:
         plan = _mock_plan(state["user_query"], has_kb=has_kb)
     else:
-        model = get_chat_model(temperature=0.1, timeout_seconds=remaining_seconds(state, 60))
-        hint = f"\n已绑定知识库: {state.get('knowledge_base_ids')}" if has_kb else "\n未绑定知识库"
-        resp = model.invoke(
-            [
-                SystemMessage(content=_PLANNER_SYSTEM),
-                HumanMessage(content=state["user_query"] + hint),
-            ]
-        )
-        plan = _extract_json(str(resp.content))
+        hint = "\n已绑定知识库" if has_kb else "\n未绑定知识库"
+        response = get_chat_model(temperature=0.1,
+                                  timeout_seconds=remaining_seconds(state, 60)).invoke([
+            SystemMessage(content=_PLANNER_SYSTEM),
+            HumanMessage(content=state["user_query"] + hint +
+                                 ("\n修订意见：" + state["revision_instruction"]
+                                  if state.get("revision_instruction") else "")),
+        ])
+        plan = Plan.model_validate(_extract_json(str(response.content)))
 
-    events.append(
-        make_event(
-            events=events,
-            task_id=task_id,
-            run_id=run_id,
-            event_type="PLAN_CREATED",
-            node="create_plan",
-            data={"title": plan.get("title"), "taskCount": len(plan.get("tasks") or [])},
-        )
-    )
-    events.append(
-        make_event(
-            events=events,
-            task_id=task_id,
-            run_id=run_id,
-            event_type="NODE_COMPLETED",
-            node="create_plan",
-            data={"agent": "Planner"},
-        )
-    )
+    digest = plan_hash(plan)
+    plan_dict = plan.model_dump(by_alias=True)
 
-    return {
-        "plan": plan,
-        "clarified_query": plan.get("objective") or state["user_query"],
-        "approved": True,  # 第 1 周自动批准
-        "step_count": step,
-        "events": events[len(state.get("events") or []) :],
-    }
+    events.append(make_event(events=events,
+                             task_id=task_id,
+                             run_id=run_id,
+                             event_type="PLAN_CREATED",
+                             node="create_plan",
+                             data={"plan": plan_dict,
+                                   "planHash": digest,
+                                   "planRevision": state.get("plan_revision") or 1,
+                                   "title": plan.title,
+                                   "taskCount": len(plan.tasks)}
+                             ))
+
+    events.append(make_event(events=events,
+                             task_id=task_id,
+                             run_id=run_id,
+                             event_type="NODE_COMPLETED",
+                             node="create_plan",
+                             data={"agent": "Planner"}
+                             ))
+
+    return {"plan": plan_dict,
+            "plan_hash": digest,
+            "clarified_query": plan.objective,
+            "step_count": step,
+            "events": events[len(state.get("events") or []):]}

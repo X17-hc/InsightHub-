@@ -5,10 +5,18 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
-class TaskConfig(BaseModel):
+class StrictModel(BaseModel):
+    model_config = ConfigDict(
+        frozen = True,
+        extra = "forbid",
+        populate_by_name = True,
+    )
+
+
+class TaskConfig(StrictModel):
     """任务级执行配置。"""
 
     max_steps: int = Field(default=20, ge=1, alias="maxSteps")
@@ -20,36 +28,58 @@ class TaskConfig(BaseModel):
     # 下一个可用 eventId（Java 传 DB max+1）；用于 retry 续号
     next_event_id: int | None = Field(default=None, alias="nextEventId")
 
-    model_config = {"populate_by_name": True}
+
+class PlanTask(StrictModel):
+    id: str = Field(min_length=1, max_length=64)
+    type: Literal["web_research", "knowledge_research"]
+    description: str = Field(min_length=1, max_length=2000)
+    depends_on: tuple[str, ...] = Field(default=(), alias="dependsOn")
 
 
-class ResumeTaskRequest(BaseModel):
+class Plan(StrictModel):
+    title: str = Field(min_length=1, max_length=256)
+    objective: str = Field(min_length=1, max_length=4000)
+    tasks: tuple[PlanTask, ...] = Field(min_length=1, max_length=3)
+
+    @field_validator("task")
+    @classmethod
+    def unique_task_ids(cls, value: tuple[PlanTask, ...]) -> tuple[PlanTask, ...]:
+        ids = [item.id for item in value]
+        if len(ids) != len(set(ids)):
+            raise ValueError("plan task ids must be unique")
+        return value
+
+
+class ResumeTaskRequest(StrictModel):
     """从 Checkpoint 恢复流式执行。"""
 
     run_id: str | None = Field(default=None, alias="runId")
     trace_id: str | None = Field(default=None, alias="traceId")
 
-    model_config = {"populate_by_name": True}
+    approved_plan_hash: str | None = Field(default=None, alias="approvedPlanHash")
 
 
 class AgentTaskRequest(BaseModel):
     """创建 Agent 任务请求体。"""
 
-    task_id: str = Field(alias="taskId")
-    workspace_id: str = Field(alias="workspaceId")
-    user_id: str = Field(alias="userId")
-    query: str
-    knowledge_base_ids: list[str] = Field(default_factory=list, alias="knowledgeBaseIds")
+    task_id: str = Field(alias="taskId", min_length=1, max_length=64)
+    workspace_id: str = Field(alias="workspaceId", min_length=1, max_length=64)
+    user_id: str = Field(alias="userId", min_length=1, max_length=64)
+    query: str = Field(min_length=1, max_length=20000)
+    phase: Literal["PLAN", "EXECUTE"] = "PLAN"
+    run_id: str | None = Field(default=None, alias="runId")
+    plan_revision: int | None = Field(default=None, ge=1, alias="planRevision")
+    revision_instruction: str | None = Field(default=None, max_length=2000, alias="revisionInstruction")
+    approved_plan_hash: str | None = Field(default=None, alias="approvedPlanHash")
+    knowledge_base_ids: tuple[str, ...] = Field(default=(), alias="knowledgeBaseIds")
     config: TaskConfig = Field(default_factory=TaskConfig)
 
-    model_config = {"populate_by_name": True}
 
-
-class AgentEvent(BaseModel):
+class AgentEvent(StrictModel):
     """节点事件。"""
 
     schema_version: str = Field(default="1.0", alias="schemaVersion")
-    event_id: int = Field(alias="eventId")
+    event_id: int = Field(alias="eventId", ge=1)
     task_id: str = Field(alias="taskId")
     run_id: str = Field(alias="runId")
     node: str | None = None
@@ -57,10 +87,8 @@ class AgentEvent(BaseModel):
     timestamp: str
     data: dict[str, Any] = Field(default_factory=dict)
 
-    model_config = {"populate_by_name": True}
 
-
-class AgentError(BaseModel):
+class AgentError(StrictModel):
     """结构化错误。"""
 
     code: str
@@ -68,21 +96,23 @@ class AgentError(BaseModel):
     trace_id: str | None = Field(default=None, alias="traceId")
     details: dict[str, Any] = Field(default_factory=dict)
 
-    model_config = {"populate_by_name": True}
-
 
 class AgentTaskResponse(BaseModel):
     """同步任务响应。"""
 
     task_id: str = Field(alias="taskId")
     run_id: str = Field(alias="runId")
-    status: Literal["COMPLETED", "FAILED"]
+    status: Literal["WAITING_APPROVAL", "COMPLETED", "FAILED"]
+
+    plan_revision: int | None = Field(default=None, alias="planRevision")
+    plan_hash: str | None = Field(default=None, alias="planHash")
+    plan: Plan | None = None
+
     report_markdown: str | None = Field(default=None, alias="reportMarkdown")
-    events: list[AgentEvent] = Field(default_factory=list)
-    citations: list[dict[str, Any]] = Field(default_factory=list)
+    events: tuple[AgentEvent, ...] = ()
+    citations: tuple[dict[str, Any], ...] = ()
     error: AgentError | None = None
 
-    model_config = {"populate_by_name": True}
 
 
 def utc_now_iso() -> str:
