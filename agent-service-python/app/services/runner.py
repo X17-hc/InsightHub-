@@ -6,6 +6,7 @@ import logging
 import time
 from collections.abc import Iterator
 from typing import Any
+from urllib import request
 
 from app.core.config import get_settings
 from app.graph.builder import get_compiled_graph
@@ -27,14 +28,15 @@ from app.services.checkpoint_service import checkpoint_values, patch_control_eve
 from app.services.event_service import dumps_event as _dumps_event, task_result_line as _task_result_line
 from app.services.task_response_builder import response_from_state
 from app.services.execution_context import ExecutionContext
+from app.schemas.protocol import AgentEvent, AgentTaskRequest, AgentTaskResponse, Plan
 
 logger = logging.getLogger(__name__)
 
 def _build_init_state(
-    request: AgentTaskRequest,
-    context: ExecutionContext,
-    initial_events: list[dict[str, Any]],
-) -> dict[str, Any]:
+    request,
+    context,
+    initial_events,
+):
     """构造图初始状态。"""
     return {
         "task_id": request.task_id,
@@ -44,8 +46,12 @@ def _build_init_state(
         "trace_id": context.trace_id,
         "user_query": request.query,
         "clarified_query": None,
+        "phase": request.phase,
+        "plan_revision": request.plan_revision or 1,
+        "revision_instruction": request.revision_instruction,
         "plan": None,
-        "approved": False,
+        "plan_hash": None,
+        "approved": request.phase == "EXECUTE",
         "pending_tasks": [],
         "completed_tasks": [],
         "evidence": [],
@@ -57,7 +63,7 @@ def _build_init_state(
         "max_steps": request.config.max_steps,
         "deadline_at": context.deadline_at,
         "enable_web_search": request.config.enable_web_search,
-        "knowledge_base_ids": list(request.knowledge_base_ids or []),
+        "knowledge_base_ids": list(request.knowledge_base_ids),
         "citations": [],
         "errors": [],
         "status": "RUNNING",
@@ -204,7 +210,7 @@ def resume_research_task(
     run_id: str | None = None,
     trace_id: str | None = None,
     timeout_seconds: int = 300,
-) -> Iterator[str]:
+    final_state=None) -> Iterator[str]:
     """
     从 MemorySaver Checkpoint 恢复流式执行。
 
@@ -230,7 +236,43 @@ def resume_research_task(
         with hold_task_execution(task_id, timeout + 600):
             graph = get_compiled_graph()
             config = {"configurable": {"thread_id": task_id}}
-            values = checkpoint_values(graph, task_id)
+            values = final_state
+            if "__interrupt__" in final_state:
+                values = checkpoint_values(graph, request.task_id)
+                approval_event = make_event(
+                    events=list(values.get("events") or []),
+                    task_id=request.task_id,
+                    run_id=run_id,
+                    event_type="APPROVAL_REQUIRED",
+                    node="wait_for_approval",
+                    data={"planRevision": values.get("plan_revision") or 1,
+                          "planHash": values.get("plan_hash")},
+                )
+                _persist_control_event(
+                    graph, config, approval_event, status="WAITING_APPROVAL"
+                )
+                values = {
+                    **values, "status": "WAITING_APPROVAL",
+                    "events": list(values.get("events") or []) + [approval_event]
+                }
+
+                final_state = values
+                if final_state.get("status") == "WAITING_APPROVAL":
+                    return AgentTaskResponse(
+                        taskId=request.task_id,
+                        runId=run_id,
+                        status="WAITING_APPROVAL",
+                        planRevision=int(final_state.get("plan_revision") or 1),
+                        planHash=final_state.get("plan_hash"),
+                        plan=Plan.model_validate(final_state.get("plan")),
+                        events=tuple(AgentEvent.model_validate(e) for e in final_state.get("events", [])),
+                        reportMarkdown=None,
+                        citations=(),
+                        error=None,
+                    )
+
+
+
             if not values:
                 yield _task_result_line(
                     task_id=task_id,
@@ -303,6 +345,25 @@ def _stream_graph(
         for stream_item in graph.stream(stream_input, config=config, stream_mode=["custom", "values"]):
             mode = "values"
             chunk = stream_item
+            if isinstance(chunk, dict) and "__interrupt__" in chunk:
+                values = checkpoint_values(graph, task_id)
+                approval_event = make_event(
+                    events=list(values.get("events") or []), task_id=task_id,
+                    run_id=run_id, event_type="APPROVAL_REQUIRED",
+                    node="wait_for_approval",
+                    data={"planRevision": values.get("plan_revision") or 1,
+                          "planHash": values.get("plan_hash")},
+                )
+                _persist_control_event(graph, config, approval_event, status="WAITING_APPROVAL")
+                yield _dumps_event(approval_event)
+                yield _task_result_line(
+                    task_id=task_id, run_id=run_id, status="WAITING_APPROVAL",
+                    report_markdown=None, error=None,
+                    plan=values.get("plan"), plan_hash=values.get("plan_hash"),
+                    plan_revision=values.get("plan_revision") or 1,
+                )
+                return
+
             if isinstance(stream_item, tuple) and len(stream_item) == 2:
                 mode, chunk = stream_item
 

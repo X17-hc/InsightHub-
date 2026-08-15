@@ -29,8 +29,17 @@ _compiled = None
 
 def wait_for_approval(state: ResearchState) -> dict[str, Any]:
     """PLAN 阶段暂停；第二天使用 Command(resume=...) 从同一节点恢复。"""
+
     if state.get("phase") == "EXECUTE" and state.get("approved"):
         return {"status": "RUNNING"}
+    decision = interrupt({
+        "type": "APPROVAL_REQUIRED",
+        "planRevision": state.get("plan_revision") or 1,
+        "planHash": state.get("plan_hash"),
+    })
+    if not isinstance(decision, dict) or decision.get("approved") is not True:
+        raise ValueError("plan approval payload is invalid")
+    return {"phase": "EXECUTE", "approved": True, "status": "RUNNING"}
 
 
 def _checkpoint_uri() -> str:
@@ -118,39 +127,23 @@ def build_graph(checkpointer: BaseCheckpointSaver[Any] | None = None):
         checkpointer: 可选自定义 checkpointer；默认使用配置的持久化后端。
     """
     graph = StateGraph(ResearchState)
+    # 添加节点
     graph.add_node("create_plan", create_plan)
+    graph.add_node("wait_for_approval", wait_for_approval)
     graph.add_node("dispatch_tasks", dispatch_tasks)
     graph.add_node("knowledge_research", knowledge_research)
     graph.add_node("web_research", web_research)
     graph.add_node("write_report", write_report)
     graph.add_node("finalize", finalize)
 
+    # 添加边
     graph.add_edge(START, "create_plan")
-    graph.add_conditional_edges(
-        "create_plan",
-        _route_after_node,
-        {"continue": "dispatch_tasks", "stop": END},
-    )
-    graph.add_conditional_edges(
-        "dispatch_tasks",
-        _route_after_node,
-        {"continue": "knowledge_research", "stop": END},
-    )
-    graph.add_conditional_edges(
-        "knowledge_research",
-        _route_after_node,
-        {"continue": "web_research", "stop": END},
-    )
-    graph.add_conditional_edges(
-        "web_research",
-        _route_after_node,
-        {"continue": "write_report", "stop": END},
-    )
-    graph.add_conditional_edges(
-        "write_report",
-        _route_after_node,
-        {"continue": "finalize", "stop": END},
-    )
+    graph.add_edge("create_plan", "wait_for_approval")
+    graph.add_edge("wait_for_approval", "dispatch_tasks")
+    graph.add_edge("dispatch_tasks", "knowledge_research")
+    graph.add_edge("knowledge_research", "web_research")
+    graph.add_edge("web_research", "write_report")
+    graph.add_edge("write_report", "finalize")
     graph.add_edge("finalize", END)
 
     return graph.compile(checkpointer=checkpointer or get_checkpointer())

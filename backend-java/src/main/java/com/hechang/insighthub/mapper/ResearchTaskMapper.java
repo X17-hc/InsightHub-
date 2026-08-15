@@ -133,4 +133,24 @@ public interface ResearchTaskMapper extends BaseMapper<ResearchTask> {
             @Param("id") String id,
             @Param("workspaceId") String workspaceId,
             @Param("runId") String runId);
+
+    /** Persist the current plan projection and task status atomically. */
+    @Update("""
+            UPDATE research_task
+            SET current_plan_revision_id = #{revisionId},
+                plan_json = #{planJson},
+                plan_approved = #{planApproved},
+                current_run_id = #{runId},
+                status = #{status},
+                updated_at = NOW()
+            WHERE id = #{id} AND workspace_id = #{workspaceId}
+            """)
+    int updatePlanProjection(
+            @Param("id") String id,
+            @Param("workspaceId") String workspaceId,
+            @Param("revisionId") String revisionId,
+            @Param("planJson") String planJson,
+            @Param("planApproved") Integer planApproved,
+            @Param("runId") String runId,
+            @Param("status") String status);
 }

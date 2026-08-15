@@ -44,6 +44,9 @@ public class ResearchTask {
     @Column("plan_approved")
     private Integer planApproved;
 
+    @Column("current_plan_revision_id")
+    private String currentPlanRevisionId;
+
     private String status;
 
     @Column("current_node")

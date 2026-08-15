@@ -14,25 +14,26 @@ def dumps_event(event: dict[str, Any]) -> str:
     return json.dumps(event, ensure_ascii=False)
 
 
-def task_result_line(
-    *,
-    task_id: str,
-    run_id: str,
-    status: str,
-    report_markdown: str | None,
-    error: dict[str, Any] | None,
-    citations: list[dict[str, Any]] | None = None,
-) -> str:
-    """构造最终 TASK_RESULT 行。"""
-    return dumps_event(
-        {
-            "schemaVersion": SCHEMA_VERSION,
-            "type": "TASK_RESULT",
-            "taskId": task_id,
-            "runId": run_id,
-            "status": status,
-            "reportMarkdown": report_markdown,
-            "citations": citations or [],
-            "error": error,
-        }
-    )
+def task_result_line(*,
+                     task_id,
+                     run_id,
+                     status,
+                     report_markdown,
+                     error,
+                     citations=None,
+                     plan=None,
+                     plan_hash=None,
+                     plan_revision=None):
+    return dumps_event({
+        "schemaVersion": "1.0",
+        "type": "TASK_RESULT",
+        "taskId": task_id,
+        "runId": run_id,
+        "status": status,
+        "plan": plan,
+        "planHash": plan_hash,
+        "planRevision": plan_revision,
+        "reportMarkdown": report_markdown,
+        "citations": citations or [],
+        "error": error,
+    })
