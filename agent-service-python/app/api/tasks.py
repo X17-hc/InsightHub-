@@ -9,8 +9,8 @@ from fastapi import APIRouter, Header, HTTPException
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from app.core.config import get_settings
-from app.schemas.protocol import AgentError, AgentTaskRequest, AgentTaskResponse, ResumeTaskRequest
-from app.services.runner import resume_research_task, run_research_task, stream_research_task
+from app.schemas.protocol import AgentError, AgentTaskRequest, AgentTaskResponse, ResumeTaskRequest, PlanApprovalResumeRequest
+from app.services.runner import approve_plan_research_task, resume_research_task, run_research_task, stream_research_task
 
 router = APIRouter()
 
@@ -158,4 +158,16 @@ def resume_agent_task(
             )
         )
 
+    return StreamingResponse(gen(), media_type="application/x-ndjson; charset=utf-8")
+
+
+@router.post("/internal/v1/agent/tasks/{task_id}/plan/approve", response_model=None)
+def approve_plan_agent_task(
+    task_id: str, body: PlanApprovalResumeRequest,
+    x_trace_id: str | None = Header(default=None, alias="X-Trace-Id"),
+) -> StreamingResponse:
+    def gen() -> Iterator[bytes]:
+        yield from _ndjson_lines(approve_plan_research_task(
+            task_id, run_id=body.run_id, approved_plan_hash=body.approved_plan_hash,
+            trace_id=x_trace_id, timeout_seconds=get_settings().default_timeout_seconds))
     return StreamingResponse(gen(), media_type="application/x-ndjson; charset=utf-8")

@@ -124,6 +124,7 @@ def create_plan(state: ResearchState) -> dict[str, Any]:
                              data={"plan": plan_dict,
                                    "planHash": digest,
                                    "planRevision": state.get("plan_revision") or 1,
+                                   "revisionInstruction": state.get("revision_instruction"),
                                    "title": plan.title,
                                    "taskCount": len(plan.tasks)}
                              ))

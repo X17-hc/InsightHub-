@@ -138,6 +138,31 @@ public class TaskEventService {
         throw new IllegalStateException("unable to allocate terminal event number");
     }
 
+    /** Persist a Java-originated task event using the same task-scoped event sequence as Agent events. */
+    public StoredEvent insertServerEvent(
+            String taskId, String runId, String node, String type, Map<String, Object> data) {
+        Map<String, Object> safeData = data == null ? Map.of() : Map.copyOf(data);
+        String payload = writeJson(safeData, "serialize task event payload failed");
+        String timestamp = Instant.now().toString();
+        long firstEventNo = maxEventNo(taskId) + 1;
+        for (int attempt = 0; attempt < 5; attempt++) {
+            long eventNo = firstEventNo + attempt;
+            if (mapper.insertIgnore(taskId, eventNo, runId, node, type, payload, parseTimestamp(timestamp)) > 0) {
+                Map<String, Object> envelope = new LinkedHashMap<>();
+                envelope.put("schemaVersion", "1.0");
+                envelope.put("eventId", eventNo);
+                envelope.put("taskId", taskId);
+                envelope.put("runId", runId);
+                envelope.put("node", node);
+                envelope.put("type", type);
+                envelope.put("timestamp", timestamp);
+                envelope.put("data", safeData);
+                return new StoredEvent(eventNo, writeJson(envelope, "serialize task event envelope failed"));
+            }
+        }
+        throw new IllegalStateException("unable to allocate task event number");
+    }
+
     private static LocalDateTime parseTimestamp(String value) {
         if (value == null || value.isBlank()) return LocalDateTime.now(ZoneOffset.UTC);
         try {

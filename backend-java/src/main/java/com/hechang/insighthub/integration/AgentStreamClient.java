@@ -20,6 +20,7 @@ import org.springframework.web.reactive.function.client.WebClient;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.hechang.insighthub.config.AgentProperties;
+import com.hechang.insighthub.service.TaskDispatchCommand;
 
 import lombok.RequiredArgsConstructor;
 
@@ -103,6 +104,27 @@ public class AgentStreamClient {
                 .bodyToFlux(DataBuffer.class);
 
         consumeNdjson(flux, onLine);
+    }
+
+    /** 人工确认计划后的专用恢复入口，不能与普通暂停恢复混用。 */
+    public void approvePlan(String taskId, String runId, String approvedPlanHash, String traceId,
+                            int timeoutSec, Consumer<JsonNode> onLine) {
+        Map<String, Object> body = Map.of("runId", runId, "approvedPlanHash", approvedPlanHash);
+        consumeNdjson(clientForTimeout(timeoutSec).post()
+                .uri("/internal/v1/agent/tasks/{taskId}/plan/approve", taskId)
+                .contentType(MediaType.APPLICATION_JSON).accept(MediaType.parseMediaType("application/x-ndjson"))
+                .header("X-Trace-Id", traceId == null ? "" : traceId).bodyValue(body).retrieve()
+                .bodyToFlux(DataBuffer.class), onLine);
+    }
+
+    public void streamTask(TaskDispatchCommand command, int timeoutSec, Long nextEventId,
+                           Consumer<JsonNode> onLine) {
+        Map<String, Object> body = buildBody(command, timeoutSec, nextEventId);
+        consumeNdjson(clientForTimeout(timeoutSec).post().uri("/internal/v1/agent/tasks/stream")
+                .contentType(MediaType.APPLICATION_JSON).accept(MediaType.parseMediaType("application/x-ndjson"))
+                .header("X-Trace-Id", command.traceId())
+                .header("X-Idempotency-Key", command.taskId() + ":" + command.runId() + ":" + command.phase())
+                .bodyValue(body).retrieve().bodyToFlux(DataBuffer.class), onLine);
     }
 
     /** 按任务超时构造带 responseTimeout 的 WebClient（超时 + 缓冲）。 */
@@ -225,6 +247,16 @@ public class AgentStreamClient {
         body.put("planRevision", 1);
         body.put("knowledgeBaseIds", knowledgeBaseIds == null ? List.of() : knowledgeBaseIds);
         body.put("config", config);
+        return body;
+    }
+
+    private static Map<String, Object> buildBody(TaskDispatchCommand command, int timeoutSec, Long nextEventId) {
+        Map<String, Object> body = buildBody(command.taskId(), command.workspaceId(), command.userId(), command.query(),
+                timeoutSec, nextEventId, command.knowledgeBaseIds());
+        body.put("phase", command.phase());
+        body.put("runId", command.runId());
+        body.put("planRevision", command.planRevision());
+        if (command.revisionInstruction() != null) body.put("revisionInstruction", command.revisionInstruction());
         return body;
     }
 }

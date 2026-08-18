@@ -57,4 +57,8 @@ public interface ResearchTaskService extends IService<ResearchTask> {
     PlanRevisionResponse getCurrentPlan(String workspaceId, String taskId);
 
     List<PlanRevisionResponse> listPlanHistory(String workspaceId, String taskId);
+
+    PlanActionResponse approvePlan(String workspaceId, String taskId, ApprovePlanRequest request, String ip);
+
+    PlanActionResponse revisePlan(String workspaceId, String taskId, RevisePlanRequest request, String ip);
 }

@@ -59,6 +59,11 @@ class ResumeTaskRequest(StrictModel):
     approved_plan_hash: str | None = Field(default=None, alias="approvedPlanHash")
 
 
+class PlanApprovalResumeRequest(StrictModel):
+    run_id: str = Field(alias="runId", min_length=1, max_length=64)
+    approved_plan_hash: str = Field(alias="approvedPlanHash", min_length=64, max_length=64)
+
+
 class AgentTaskRequest(StrictModel):
     """创建 Agent 任务请求体。"""
 

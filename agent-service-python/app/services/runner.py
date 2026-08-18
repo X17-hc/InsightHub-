@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import hmac
 import time
 from collections.abc import Iterator
 from typing import Any
@@ -25,6 +26,8 @@ from app.services.control import (
 )
 from app.services.execution_lease import TaskExecutionConflict, hold_task_execution
 from app.services.checkpoint_service import checkpoint_values, patch_control_event as _persist_control_event, reset_checkpoint
+from app.services.checkpoint_service import checkpoint_thread_id
+from langgraph.types import Command
 from app.services.event_service import dumps_event as _dumps_event, task_result_line as _task_result_line
 from app.services.task_response_builder import response_from_state
 from app.services.execution_context import ExecutionContext
@@ -104,7 +107,7 @@ def run_research_task(request: AgentTaskRequest, trace_id: str | None = None) ->
         with hold_task_execution(request.task_id, context.timeout_seconds + 600):
             final_state = graph.invoke(
                 init_state,
-                config={"configurable": {"thread_id": request.task_id}},
+                config={"configurable": {"thread_id": checkpoint_thread_id(request.task_id, run_id)}},
             )
     except TaskExecutionConflict as exc:
         fail_event = make_event(
@@ -146,7 +149,7 @@ def run_research_task(request: AgentTaskRequest, trace_id: str | None = None) ->
         )
 
     if isinstance(final_state, dict) and "__interrupt__" in final_state:
-        values = checkpoint_values(graph, request.task_id)
+        values = checkpoint_values(graph, request.task_id, run_id)
         approval_event = make_event(
             events=list(values.get("events") or []),
             task_id=request.task_id,
@@ -158,7 +161,7 @@ def run_research_task(request: AgentTaskRequest, trace_id: str | None = None) ->
                 "planHash": values.get("plan_hash"),
             },
         )
-        _persist_control_event(graph, {"configurable": {"thread_id": request.task_id}}, approval_event,
+        _persist_control_event(graph, {"configurable": {"thread_id": checkpoint_thread_id(request.task_id, run_id)}}, approval_event,
                                status="WAITING_APPROVAL")
         final_state = {
             **values,
@@ -194,7 +197,7 @@ def stream_research_task(
             seed_events: list[dict[str, Any]] = []
             next_eid = request.config.next_event_id
             if next_eid is not None and int(next_eid) > 1:
-                reset_checkpoint(request.task_id)
+                reset_checkpoint(request.task_id, run_id)
                 seed_events = [{"eventId": int(next_eid) - 1}]
 
             started = make_event(
@@ -257,44 +260,7 @@ def resume_research_task(
     try:
         with hold_task_execution(task_id, timeout + 600):
             graph = get_compiled_graph()
-            config = {"configurable": {"thread_id": task_id}}
-            values = final_state
-            if "__interrupt__" in final_state:
-                values = checkpoint_values(graph, request.task_id)
-                approval_event = make_event(
-                    events=list(values.get("events") or []),
-                    task_id=request.task_id,
-                    run_id=run_id,
-                    event_type="APPROVAL_REQUIRED",
-                    node="wait_for_approval",
-                    data={"planRevision": values.get("plan_revision") or 1,
-                          "planHash": values.get("plan_hash")},
-                )
-                _persist_control_event(
-                    graph, config, approval_event, status="WAITING_APPROVAL"
-                )
-                values = {
-                    **values, "status": "WAITING_APPROVAL",
-                    "events": list(values.get("events") or []) + [approval_event]
-                }
-
-                final_state = values
-                if final_state.get("status") == "WAITING_APPROVAL":
-                    return AgentTaskResponse(
-                        taskId=request.task_id,
-                        runId=run_id,
-                        status="WAITING_APPROVAL",
-                        planRevision=int(final_state.get("plan_revision") or 1),
-                        planHash=final_state.get("plan_hash"),
-                        plan=Plan.model_validate(final_state.get("plan")),
-                        events=tuple(AgentEvent.model_validate(e) for e in final_state.get("events", [])),
-                        reportMarkdown=None,
-                        citations=(),
-                        error=None,
-                    )
-
-
-
+            values = final_state or checkpoint_values(graph, task_id, run)
             if not values:
                 yield _task_result_line(
                     task_id=task_id,
@@ -304,17 +270,6 @@ def resume_research_task(
                     error={"code": "NO_CHECKPOINT", "message": "checkpoint not found", "traceId": trace},
                 )
                 return
-            context = ExecutionContext.for_resume(
-                task_id,
-                run_id=run_id or values.get("run_id"),
-                trace_id=trace_id or values.get("trace_id"),
-                timeout_seconds=timeout,
-            )
-            run = context.run_id
-            trace = context.trace_id
-            graph.update_state(config, {"status": "RUNNING", "deadline_at": context.deadline_at})
-
-            # LangGraph：None 输入表示从 checkpoint 继续
             yield from _stream_graph(
                 task_id=task_id,
                 run_id=run,
@@ -333,13 +288,37 @@ def resume_research_task(
         )
 
 
+def approve_plan_research_task(
+    task_id: str, *, run_id: str, approved_plan_hash: str, trace_id: str | None = None,
+    timeout_seconds: int = 300,
+) -> Iterator[str]:
+    """只允许通过匹配的计划哈希从审批中断点继续。"""
+    context = ExecutionContext.for_resume(task_id, run_id=run_id, trace_id=trace_id, timeout_seconds=timeout_seconds)
+    graph = get_compiled_graph()
+    values = checkpoint_values(graph, task_id, run_id)
+    stored_hash = str((values or {}).get("plan_hash") or "")
+    if not values or not hmac.compare_digest(stored_hash, approved_plan_hash):
+        yield _task_result_line(task_id=task_id, run_id=run_id, status="FAILED", report_markdown=None,
+                                error={"code": "PLAN_HASH_MISMATCH", "message": "plan checkpoint does not match approval", "traceId": context.trace_id})
+        return
+    try:
+        with hold_task_execution(task_id, context.timeout_seconds + 600):
+            yield from _stream_graph(task_id=task_id, run_id=run_id, trace=context.trace_id,
+                                     timeout=context.timeout_seconds,
+                                     input_state=Command(resume={"approved": True, "approvedPlanHash": approved_plan_hash}),
+                                     resume=True)
+    except TaskExecutionConflict as exc:
+        yield _task_result_line(task_id=task_id, run_id=run_id, status="FAILED", report_markdown=None,
+                                error={"code": "TASK_ALREADY_RUNNING", "message": str(exc), "traceId": context.trace_id})
+
+
 def _stream_graph(
     *,
     task_id: str,
     run_id: str,
     trace: str,
     timeout: int,
-    input_state: dict[str, Any] | None,
+    input_state: Any,
     resume: bool,
 ) -> Iterator[str]:
     """内部：驱动 graph.stream 并在节点边界检查控制字。"""
@@ -352,7 +331,7 @@ def _stream_graph(
     # 新建流已先 yield TASK_STARTED，跳过 state 中前 1 条；resume 仅增量 flush
     last_event_count = 0 if resume else 1
     final_state: dict[str, Any] | None = None
-    config = {"configurable": {"thread_id": task_id}}
+    config = {"configurable": {"thread_id": checkpoint_thread_id(task_id, run_id)}}
     emitted_event_ids: set[int] = set()
     if resume:
         try:
@@ -368,7 +347,7 @@ def _stream_graph(
             mode = "values"
             chunk = stream_item
             if isinstance(chunk, dict) and "__interrupt__" in chunk:
-                values = checkpoint_values(graph, task_id)
+                values = checkpoint_values(graph, task_id, run_id)
                 approval_event = make_event(
                     events=list(values.get("events") or []), task_id=task_id,
                     run_id=run_id, event_type="APPROVAL_REQUIRED",
@@ -388,6 +367,23 @@ def _stream_graph(
 
             if isinstance(stream_item, tuple) and len(stream_item) == 2:
                 mode, chunk = stream_item
+
+            if isinstance(chunk, dict) and "__interrupt__" in chunk:
+                values = checkpoint_values(graph, task_id, run_id)
+                approval_event = make_event(
+                    events=list(values.get("events") or []), task_id=task_id,
+                    run_id=run_id, event_type="APPROVAL_REQUIRED",
+                    node="wait_for_approval",
+                    data={"planRevision": values.get("plan_revision") or 1,
+                          "planHash": values.get("plan_hash")},
+                )
+                _persist_control_event(graph, config, approval_event, status="WAITING_APPROVAL")
+                yield _dumps_event(approval_event)
+                yield _task_result_line(
+                    task_id=task_id, run_id=run_id, status="WAITING_APPROVAL",
+                    report_markdown=None, error=None, plan=values.get("plan"),
+                    plan_hash=values.get("plan_hash"), plan_revision=values.get("plan_revision") or 1)
+                return
 
             if mode == "custom":
                 if isinstance(chunk, dict) and chunk.get("type") and chunk.get("eventId") is not None:

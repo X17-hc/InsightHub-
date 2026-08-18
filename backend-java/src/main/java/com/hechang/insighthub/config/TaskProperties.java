@@ -26,4 +26,8 @@ public class TaskProperties {
     @Positive
     private int sseHeartbeatSeconds = 15;
 
+    /** 可靠派发命令允许的最大尝试次数。 */
+    @Positive
+    private int dispatchMaxAttempts = 5;
+
 }

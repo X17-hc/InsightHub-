@@ -4,6 +4,7 @@ import org.mybatis.spring.annotation.MapperScan;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.context.properties.ConfigurationPropertiesScan;
+import org.springframework.scheduling.annotation.EnableScheduling;
 
 /**
  * InsightHub Java 平台服务入口。
@@ -11,6 +12,7 @@ import org.springframework.boot.context.properties.ConfigurationPropertiesScan;
 @SpringBootApplication
 @MapperScan("com.hechang.insighthub.mapper")
 @ConfigurationPropertiesScan
+@EnableScheduling
 public class InsightHubApplication {
 
     public static void main(String[] args) {

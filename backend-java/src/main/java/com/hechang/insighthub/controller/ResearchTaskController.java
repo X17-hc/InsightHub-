@@ -13,6 +13,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
+import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
@@ -164,6 +165,24 @@ public class ResearchTaskController {
     public BaseResponse<List<PlanRevisionResponse>> planHistory(
             @PathVariable String workspaceId, @PathVariable String taskId) {
         return ResultUtils.success(researchTaskService.listPlanHistory(workspaceId, taskId));
+    }
+
+    @PostMapping("/{taskId}/plan/approve")
+    @Operation(summary = "确认当前计划并继续执行")
+    public BaseResponse<PlanActionResponse> approvePlan(
+            @PathVariable String workspaceId, @PathVariable String taskId,
+            @Valid @RequestBody ApprovePlanRequest request, HttpServletRequest httpRequest) {
+        return ResultUtils.success(researchTaskService.approvePlan(
+                workspaceId, taskId, request, httpRequest.getRemoteAddr()));
+    }
+
+    @PostMapping("/{taskId}/plan/revise")
+    @Operation(summary = "提交文字修订并生成新计划")
+    public BaseResponse<PlanActionResponse> revisePlan(
+            @PathVariable String workspaceId, @PathVariable String taskId,
+            @Valid @RequestBody RevisePlanRequest request, HttpServletRequest httpRequest) {
+        return ResultUtils.success(researchTaskService.revisePlan(
+                workspaceId, taskId, request, httpRequest.getRemoteAddr()));
     }
 
 

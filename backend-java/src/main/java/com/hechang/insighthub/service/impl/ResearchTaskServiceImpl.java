@@ -565,4 +565,14 @@ public class ResearchTaskServiceImpl extends ServiceImpl<ResearchTaskMapper, Res
     public List<PlanRevisionResponse> listPlanHistory(String workspaceId, String taskId) {
         return planApplicationService.history(workspaceId, taskId);
     }
+
+    @Override
+    public PlanActionResponse approvePlan(String workspaceId, String taskId, ApprovePlanRequest request, String ip) {
+        return planApplicationService.approve(workspaceId, taskId, request, ip);
+    }
+
+    @Override
+    public PlanActionResponse revisePlan(String workspaceId, String taskId, RevisePlanRequest request, String ip) {
+        return planApplicationService.revise(workspaceId, taskId, request, ip);
+    }
 }

@@ -82,25 +82,43 @@ public class TaskExecutionServiceImpl implements TaskExecutionService {
             String query,
             String traceId,
             boolean resume) {
+        executeStreamInternal(null, taskId, workspaceId, userId, query, traceId, resume);
+    }
+
+    @Override
+    public void executeDispatch(com.hechang.insighthub.service.TaskDispatchCommand command) {
+        executeStreamInternal(command, command.taskId(), command.workspaceId(), command.userId(),
+                command.query(), command.traceId(), "EXECUTE".equals(command.phase()));
+    }
+
+    private void executeStreamInternal(
+            com.hechang.insighthub.service.TaskDispatchCommand command,
+            String taskId, String workspaceId, String userId, String query, String traceId, boolean resume) {
         String generation = streamLease.acquire(taskId);
         AtomicInteger badLines = new AtomicInteger();
         try {
             int timeout = taskProperties.getDefaultTimeoutSeconds();
             if (resume) {
-                agentStreamClient.resumeTask(
-                        taskId, null, traceId, timeout,
-                        node -> handleLine(taskId, workspaceId, node, badLines, generation));
+                if (command != null && command.approvedPlanHash() != null) {
+                    agentStreamClient.approvePlan(taskId, command.runId(), command.approvedPlanHash(), traceId, timeout,
+                            node -> handleLine(taskId, workspaceId, node, badLines, generation));
+                } else {
+                    agentStreamClient.resumeTask(taskId, null, traceId, timeout,
+                            node -> handleLine(taskId, workspaceId, node, badLines, generation));
+                }
             } else {
                 long nextEventId = taskEventService.maxEventNo(taskId) + 1;
-                String idem = taskId + "-stream-" + System.currentTimeMillis();
                 List<String> kbIds = parseKbIds(
                         researchTaskMapper.findByIdAndWorkspace(taskId, workspaceId));
-                agentStreamClient.streamTask(
-                        taskId, workspaceId, userId, query, traceId, timeout,
-                        nextEventId <= 1 ? null : nextEventId,
-                        idem,
-                        kbIds,
-                        node -> handleLine(taskId, workspaceId, node, badLines, generation));
+                if (command != null) {
+                    agentStreamClient.streamTask(command, timeout, nextEventId <= 1 ? null : nextEventId,
+                            node -> handleLine(taskId, workspaceId, node, badLines, generation));
+                } else {
+                    String idem = taskId + "-stream-" + System.currentTimeMillis();
+                    agentStreamClient.streamTask(taskId, workspaceId, userId, query, traceId, timeout,
+                            nextEventId <= 1 ? null : nextEventId, idem, kbIds,
+                            node -> handleLine(taskId, workspaceId, node, badLines, generation));
+                }
             }
             if (!streamLease.isCurrent(taskId, generation)) {
                 return;

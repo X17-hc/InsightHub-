@@ -29,6 +29,8 @@ public interface ResearchTaskMapper extends BaseMapper<ResearchTask> {
                    creator_id AS creatorId,
                    query AS query,
                    status AS status,
+                   current_plan_revision_id AS currentPlanRevisionId,
+                   plan_approved AS planApproved,
                    knowledge_base_ids AS knowledgeBaseIds,
                    trace_id AS traceId,
                    current_run_id AS currentRunId
@@ -151,4 +153,50 @@ public interface ResearchTaskMapper extends BaseMapper<ResearchTask> {
             @Param("planApproved") Integer planApproved,
             @Param("runId") String runId,
             @Param("status") String status);
+
+    @Update("""
+            UPDATE research_task SET status=#{status}, plan_approved=#{planApproved},
+              current_node=#{currentNode}, progress=#{progress}, current_run_id=#{runId},
+              current_plan_revision_id=#{revisionId}, updated_at=NOW()
+            WHERE id=#{id} AND workspace_id=#{workspaceId}
+            """)
+    int updatePlanAction(@Param("id") String id, @Param("workspaceId") String workspaceId,
+            @Param("status") String status, @Param("planApproved") Integer planApproved,
+            @Param("currentNode") String currentNode, @Param("progress") int progress,
+            @Param("runId") String runId, @Param("revisionId") String revisionId);
+
+    /**
+     * Start a new planning round after a revision request.
+     *
+     * <p>The task projection is deliberately cleared here.  The old immutable
+     * revision remains available in {@code task_plan_revision}, but it must not
+     * be exposed as the current plan while the replacement is being generated.</p>
+     */
+    @Update("""
+            UPDATE research_task
+            SET status = #{status},
+                plan_json = NULL,
+                plan_approved = NULL,
+                current_plan_revision_id = NULL,
+                current_node = #{currentNode},
+                progress = #{progress},
+                current_run_id = #{runId},
+                updated_at = NOW()
+            WHERE id = #{id} AND workspace_id = #{workspaceId}
+            """)
+    int resetPlanForRevision(@Param("id") String id, @Param("workspaceId") String workspaceId,
+            @Param("status") String status, @Param("currentNode") String currentNode,
+            @Param("progress") int progress, @Param("runId") String runId);
+
+    /** Fail only the still-current dispatch run; an old retry must never overwrite a newer revision. */
+    @Update("""
+            UPDATE research_task
+            SET status = 'FAILED', error_code = #{errorCode}, error_message = #{errorMessage},
+                completed_at = NOW(), updated_at = NOW()
+            WHERE id = #{id} AND workspace_id = #{workspaceId} AND current_run_id = #{runId}
+              AND status IN ('PLANNING', 'RUNNING', 'WAITING_APPROVAL')
+            """)
+    int failDispatchIfCurrentRun(@Param("id") String id, @Param("workspaceId") String workspaceId,
+            @Param("runId") String runId, @Param("errorCode") String errorCode,
+            @Param("errorMessage") String errorMessage);
 }

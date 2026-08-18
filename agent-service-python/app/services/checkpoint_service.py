@@ -7,15 +7,19 @@ from typing import Any
 from app.graph.builder import delete_thread_checkpoint
 
 
-def checkpoint_values(graph: Any, task_id: str) -> dict[str, Any]:
+def checkpoint_thread_id(task_id: str, run_id: str) -> str:
+    return f"{task_id}:{run_id}"
+
+
+def checkpoint_values(graph: Any, task_id: str, run_id: str) -> dict[str, Any]:
     """读取任务 checkpoint，不把 LangGraph 细节泄漏到 API 层。"""
-    snapshot = graph.get_state({"configurable": {"thread_id": task_id}})
+    snapshot = graph.get_state({"configurable": {"thread_id": checkpoint_thread_id(task_id, run_id)}})
     return dict((snapshot.values if snapshot is not None else None) or {})
 
 
-def reset_checkpoint(task_id: str) -> None:
+def reset_checkpoint(task_id: str, run_id: str) -> None:
     """删除完整重试使用的旧 checkpoint。"""
-    delete_thread_checkpoint(task_id)
+    delete_thread_checkpoint(checkpoint_thread_id(task_id, run_id))
 
 
 def patch_control_event(

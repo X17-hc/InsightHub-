@@ -22,4 +22,11 @@ public interface TaskExecutionService {
             String query,
             String traceId,
             boolean resume);
+
+    /**
+     * Consume one durable outbox command.  The outbox executor, rather than
+     * this service, owns the asynchronous boundary so it can acknowledge only
+     * after this method has returned.
+     */
+    void executeDispatch(TaskDispatchCommand command);
 }

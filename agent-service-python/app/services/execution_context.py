@@ -22,7 +22,7 @@ class ExecutionContext:
         timeout = max(1, int(request.config.timeout_seconds or 300))
         return cls(
             task_id=request.task_id,
-            run_id=f"run-{uuid.uuid4().hex[:12]}",
+            run_id=request.run_id or f"run-{uuid.uuid4().hex[:12]}",
             trace_id=trace_id or f"trace-{uuid.uuid4().hex[:12]}",
             timeout_seconds=timeout,
             deadline_at=time.time() + timeout,

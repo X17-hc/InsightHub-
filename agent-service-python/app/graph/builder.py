@@ -39,7 +39,8 @@ def wait_for_approval(state: ResearchState) -> dict[str, Any]:
         "planRevision": state.get("plan_revision") or 1,
         "planHash": state.get("plan_hash"),
     })
-    if not isinstance(decision, dict) or decision.get("approved") is not True:
+    if (not isinstance(decision, dict) or decision.get("approved") is not True
+            or decision.get("approvedPlanHash") != state.get("plan_hash")):
         raise ValueError("plan approval payload is invalid")
     return {"phase": "EXECUTE", "approved": True, "status": "RUNNING"}
 
