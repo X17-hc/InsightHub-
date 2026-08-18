@@ -8,6 +8,9 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.RejectedExecutionException;
 
+import com.hechang.insighthub.model.dto.task.*;
+import com.hechang.insighthub.service.PlanApplicationService;
+import jakarta.annotation.Resource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -23,14 +26,6 @@ import com.hechang.insighthub.integration.AgentServiceClient;
 import com.hechang.insighthub.mapper.KnowledgeBaseMapper;
 import com.hechang.insighthub.mapper.ResearchTaskMapper;
 import com.hechang.insighthub.model.dto.knowledge.CitationResponse;
-import com.hechang.insighthub.model.dto.task.AgentEventDto;
-import com.hechang.insighthub.model.dto.task.AgentTaskResponseDto;
-import com.hechang.insighthub.model.dto.task.CreateResearchTaskRequest;
-import com.hechang.insighthub.model.dto.task.CreateTaskAcceptedResponse;
-import com.hechang.insighthub.model.dto.task.ReportResponse;
-import com.hechang.insighthub.model.dto.task.TaskControlResponse;
-import com.hechang.insighthub.model.dto.task.TaskEventResponse;
-import com.hechang.insighthub.model.dto.task.TaskSummaryResponse;
 import com.hechang.insighthub.model.entity.KnowledgeBase;
 import com.mybatisflex.core.query.QueryWrapper;
 import com.hechang.insighthub.model.entity.ResearchTask;
@@ -40,10 +35,10 @@ import com.hechang.insighthub.redis.TaskControlRedis;
 import com.hechang.insighthub.redis.TaskCreateRateLimiter;
 import com.hechang.insighthub.redis.TaskSlotTracker;
 import com.hechang.insighthub.redis.WorkspaceConcurrencyService;
-import com.hechang.insighthub.security.SecurityUtils;
 import com.hechang.insighthub.service.ResearchTaskService;
 import com.hechang.insighthub.service.TaskExecutionService;
 import com.hechang.insighthub.service.WorkspaceAccessService;
+import com.hechang.insighthub.service.CurrentWorkspaceAccess;
 import com.mybatisflex.spring.service.impl.ServiceImpl;
 
 /**
@@ -55,65 +50,66 @@ public class ResearchTaskServiceImpl extends ServiceImpl<ResearchTaskMapper, Res
 
     private static final Logger log = LoggerFactory.getLogger(ResearchTaskServiceImpl.class);
 
-    private final AgentServiceClient agentServiceClient;
-    private final KnowledgeBaseMapper knowledgeBaseMapper;
-    private final WorkspaceAccessService accessService;
-    private final TaskStateMachine stateMachine;
-    private final TransactionTemplate transactionTemplate;
-    private final TaskExecutionService taskExecutionService;
-    private final TaskControlRedis taskControlRedis;
-    private final WorkspaceConcurrencyService concurrencyService;
-    private final TaskSlotTracker slotTracker;
-    private final TaskCreateRateLimiter rateLimiter;
-    private final TaskEventSseHub sseHub;
-    private final TaskStreamLease streamLease;
-    private final TaskProperties taskProperties;
-    private final ObjectMapper objectMapper;
-    private final TaskResultService taskResultService;
-    private final TaskEventService taskEventService;
-    private final ResearchTaskQueryService taskQueryService;
+    @Resource
+    private AgentServiceClient agentServiceClient;
 
-    public ResearchTaskServiceImpl(
-            AgentServiceClient agentServiceClient,
-            KnowledgeBaseMapper knowledgeBaseMapper,
-            WorkspaceAccessService accessService,
-            TaskStateMachine stateMachine,
-            TransactionTemplate transactionTemplate,
-            TaskExecutionService taskExecutionService,
-            TaskControlRedis taskControlRedis,
-            WorkspaceConcurrencyService concurrencyService,
-            TaskSlotTracker slotTracker,
-            TaskCreateRateLimiter rateLimiter,
-            TaskEventSseHub sseHub,
-            TaskStreamLease streamLease,
-            TaskProperties taskProperties,
-            ObjectMapper objectMapper,
-            TaskResultService taskResultService,
-            TaskEventService taskEventService,
-            ResearchTaskQueryService taskQueryService) {
-        this.agentServiceClient = agentServiceClient;
-        this.knowledgeBaseMapper = knowledgeBaseMapper;
-        this.accessService = accessService;
-        this.stateMachine = stateMachine;
-        this.transactionTemplate = transactionTemplate;
-        this.taskExecutionService = taskExecutionService;
-        this.taskControlRedis = taskControlRedis;
-        this.concurrencyService = concurrencyService;
-        this.slotTracker = slotTracker;
-        this.rateLimiter = rateLimiter;
-        this.sseHub = sseHub;
-        this.streamLease = streamLease;
-        this.taskProperties = taskProperties;
-        this.objectMapper = objectMapper;
-        this.taskResultService = taskResultService;
-        this.taskEventService = taskEventService;
-        this.taskQueryService = taskQueryService;
-    }
+    @Resource
+    private KnowledgeBaseMapper knowledgeBaseMapper;
+
+    @Resource
+    private WorkspaceAccessService accessService;
+
+    @Resource
+    private TaskStateMachine stateMachine;
+
+    @Resource
+    private TransactionTemplate transactionTemplate;
+
+    @Resource
+    private TaskExecutionService taskExecutionService;
+
+    @Resource
+    private TaskControlRedis taskControlRedis;
+
+    @Resource
+    private WorkspaceConcurrencyService concurrencyService;
+
+    @Resource
+    private TaskSlotTracker slotTracker;
+
+    @Resource
+    private TaskCreateRateLimiter rateLimiter;
+
+    @Resource
+    private TaskEventSseHub sseHub;
+
+    @Resource
+    private TaskStreamLease streamLease;
+
+    @Resource
+    private TaskProperties taskProperties;
+
+    @Resource
+    private ObjectMapper objectMapper;
+
+    @Resource
+    private TaskResultService taskResultService;
+
+    @Resource
+    private TaskEventService taskEventService;
+
+    @Resource
+    private ResearchTaskQueryService taskQueryService;
+
+    @Resource
+    private PlanApplicationService planApplicationService;
+
+
+
 
     @Override
     public CreateTaskAcceptedResponse createAsync(String workspaceId, CreateResearchTaskRequest request) {
-        String userId = SecurityUtils.requireUserId();
-        accessService.requireMember(workspaceId, userId);
+        String userId = accessService.requireCurrentMember(workspaceId).userId();
         String query = request.getQuery();
         List<String> kbIds = normalizeKbIds(request.getKnowledgeBaseIds());
         validateKnowledgeBases(workspaceId, kbIds);
@@ -127,7 +123,6 @@ public class ResearchTaskServiceImpl extends ServiceImpl<ResearchTaskMapper, Res
             slotTracker.markHeld(taskId, workspaceId, permitId, ttl);
             insertCreatedTask(taskId, workspaceId, userId, query, traceId, kbIds);
             advance(taskId, workspaceId, TaskStatus.CREATED, TaskStatus.PLANNING, 10, "create_plan");
-            advance(taskId, workspaceId, TaskStatus.PLANNING, TaskStatus.RUNNING, 30, "dispatch_tasks");
             taskControlRedis.setControl(taskId, TaskControlRedis.CONTROL_RUNNING, ttl);
             taskExecutionService.executeStream(taskId, workspaceId, userId, query, traceId, false);
         } catch (RejectedExecutionException ex) {
@@ -141,13 +136,12 @@ public class ResearchTaskServiceImpl extends ServiceImpl<ResearchTaskMapper, Res
         }
 
         log.info("Async research task {} workspace={} traceId={}", taskId, workspaceId, traceId);
-        return new CreateTaskAcceptedResponse(taskId, TaskStatus.RUNNING.name(), traceId);
+        return new CreateTaskAcceptedResponse(taskId, TaskStatus.PLANNING.name(), traceId);
     }
 
     @Override
     public AgentTaskResponseDto createAndRun(String workspaceId, CreateResearchTaskRequest request) {
-        String userId = SecurityUtils.requireUserId();
-        accessService.requireMember(workspaceId, userId);
+        String userId = accessService.requireCurrentMember(workspaceId).userId();
         String query = request.getQuery();
         List<String> kbIds = normalizeKbIds(request.getKnowledgeBaseIds());
         validateKnowledgeBases(workspaceId, kbIds);
@@ -161,7 +155,6 @@ public class ResearchTaskServiceImpl extends ServiceImpl<ResearchTaskMapper, Res
         try {
             insertCreatedTask(taskId, workspaceId, userId, query, traceId, kbIds);
             advance(taskId, workspaceId, TaskStatus.CREATED, TaskStatus.PLANNING, 10, "create_plan");
-            advance(taskId, workspaceId, TaskStatus.PLANNING, TaskStatus.RUNNING, 30, "dispatch_tasks");
 
             AgentTaskResponseDto response;
             try {
@@ -191,23 +184,35 @@ public class ResearchTaskServiceImpl extends ServiceImpl<ResearchTaskMapper, Res
             final String finalErrorMessage = errorMessage;
             try {
                 transactionTemplate.executeWithoutResult(tx -> {
+                    insertEvents(taskId, response.getEvents());
                     if (TaskStatus.COMPLETED.matches(finalStatus)) {
                         if (response.getReportMarkdown() == null || response.getReportMarkdown().isBlank()) {
                             throw new IllegalStateException("completed task has no report");
                         }
+                        advance(taskId, workspaceId, TaskStatus.PLANNING, TaskStatus.RUNNING, 30, "dispatch_tasks");
                         advance(taskId, workspaceId, TaskStatus.RUNNING, TaskStatus.GENERATING, 80, "write_report");
                         taskResultService.saveReportAndCitations(
                                 taskId, workspaceId, response.getReportMarkdown(), response.getCitations());
                         advance(taskId, workspaceId, TaskStatus.GENERATING, TaskStatus.COMPLETED, 100, "finalize");
                         mapper.updateTaskFinished(
                                 taskId, workspaceId, TaskStatus.COMPLETED.name(), response.getRunId(), null, null);
+                    } else if (TaskStatus.WAITING_APPROVAL.matches(finalStatus)) {
+                        AgentEventDto planCreated = response.getEvents().stream()
+                                .filter(event -> "PLAN_CREATED".equals(event.getType()))
+                                .findFirst()
+                                .orElseThrow(() -> new IllegalStateException("waiting approval response has no PLAN_CREATED event"));
+                        planApplicationService.recordPlannerResult(
+                                taskId,
+                                workspaceId,
+                                userId,
+                                response.getRunId(),
+                                planCreated.getData());
                     } else {
-                        advance(taskId, workspaceId, TaskStatus.RUNNING, TaskStatus.FAILED, 30, null);
+                        advance(taskId, workspaceId, TaskStatus.PLANNING, TaskStatus.FAILED, 30, null);
                         mapper.updateTaskFinished(
                                 taskId, workspaceId, TaskStatus.FAILED.name(), response.getRunId(),
                                 finalErrorCode, truncate(finalErrorMessage, 1024));
                     }
-                    insertEvents(taskId, response.getEvents());
                 });
             } catch (RuntimeException ex) {
                 log.error("Persist agent result failed taskId={} workspace={}", taskId, workspaceId, ex);
@@ -253,15 +258,13 @@ public class ResearchTaskServiceImpl extends ServiceImpl<ResearchTaskMapper, Res
 
     @Override
     public SseEmitter streamEvents(String workspaceId, String taskId, long fromEventNo) {
-        String userId = SecurityUtils.requireUserId();
-        accessService.requireMember(workspaceId, userId);
+        accessService.requireCurrentMember(workspaceId);
         return sseHub.subscribe(taskId, workspaceId, fromEventNo);
     }
 
     @Override
     public TaskControlResponse pause(String workspaceId, String taskId) {
-        String userId = SecurityUtils.requireUserId();
-        requireControllableTask(workspaceId, taskId, userId);
+        requireControllableTask(workspaceId, taskId, accessService.requireCurrentMember(workspaceId));
         transactionTemplate.executeWithoutResult(tx -> {
             ResearchTask locked = requireTaskForUpdate(workspaceId, taskId);
             stateMachine.transition(TaskStatus.valueOf(locked.getStatus()), TaskStatus.PAUSING);
@@ -278,8 +281,8 @@ public class ResearchTaskServiceImpl extends ServiceImpl<ResearchTaskMapper, Res
 
     @Override
     public TaskControlResponse resume(String workspaceId, String taskId) {
-        String userId = SecurityUtils.requireUserId();
-        ResearchTask row = requireControllableTask(workspaceId, taskId, userId);
+        ResearchTask row = requireControllableTask(
+                workspaceId, taskId, accessService.requireCurrentMember(workspaceId));
         stateMachine.transition(TaskStatus.valueOf(row.getStatus()), TaskStatus.RUNNING);
         int ttl = taskProperties.getDefaultTimeoutSeconds() + 600;
         String permitId = concurrencyService.tryAcquire(workspaceId, ttl);
@@ -324,8 +327,7 @@ public class ResearchTaskServiceImpl extends ServiceImpl<ResearchTaskMapper, Res
 
     @Override
     public TaskControlResponse cancel(String workspaceId, String taskId) {
-        String userId = SecurityUtils.requireUserId();
-        requireControllableTask(workspaceId, taskId, userId);
+        requireControllableTask(workspaceId, taskId, accessService.requireCurrentMember(workspaceId));
         TaskEventService.StoredEvent cancelled = transactionTemplate.execute(tx -> {
             ResearchTask row = requireTaskForUpdate(workspaceId, taskId);
             TaskStatus from = TaskStatus.valueOf(row.getStatus());
@@ -350,9 +352,9 @@ public class ResearchTaskServiceImpl extends ServiceImpl<ResearchTaskMapper, Res
 
     @Override
     public CreateTaskAcceptedResponse retry(String workspaceId, String taskId) {
-        String userId = SecurityUtils.requireUserId();
-        ResearchTask row = requireControllableTask(workspaceId, taskId, userId);
-        rateLimiter.acquire(userId);
+        CurrentWorkspaceAccess actor = accessService.requireCurrentMember(workspaceId);
+        ResearchTask row = requireControllableTask(workspaceId, taskId, actor);
+        rateLimiter.acquire(actor.userId());
         int ttl = taskProperties.getDefaultTimeoutSeconds() + 600;
         String permitId = concurrencyService.tryAcquire(workspaceId, ttl);
         if (permitId != null) {
@@ -470,10 +472,10 @@ public class ResearchTaskServiceImpl extends ServiceImpl<ResearchTaskMapper, Res
     }
 
     /** 任务控制仅允许创建者或工作空间管理员。 */
-    private ResearchTask requireControllableTask(String workspaceId, String taskId, String userId) {
-        WorkspaceRole role = accessService.requireMember(workspaceId, userId);
+    private ResearchTask requireControllableTask(
+            String workspaceId, String taskId, CurrentWorkspaceAccess actor) {
         ResearchTask task = requireTask(workspaceId, taskId);
-        if (!userId.equals(task.getCreatorId()) && !role.isAdminOrAbove()) {
+        if (!actor.userId().equals(task.getCreatorId()) && !actor.role().isAdminOrAbove()) {
             throw BusinessException.forbidden("only task creator or workspace admin may control task");
         }
         return task;
@@ -554,4 +556,13 @@ public class ResearchTaskServiceImpl extends ServiceImpl<ResearchTaskMapper, Res
         return TaskStatus.isTerminal(status);
     }
 
+    @Override
+    public PlanRevisionResponse getCurrentPlan(String workspaceId, String taskId) {
+        return planApplicationService.current(workspaceId, taskId);
+    }
+
+    @Override
+    public List<PlanRevisionResponse> listPlanHistory(String workspaceId, String taskId) {
+        return planApplicationService.history(workspaceId, taskId);
+    }
 }

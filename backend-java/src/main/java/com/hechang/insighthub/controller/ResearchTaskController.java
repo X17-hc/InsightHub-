@@ -2,10 +2,10 @@ package com.hechang.insighthub.controller;
 
 import java.util.List;
 
+import com.hechang.insighthub.model.dto.task.*;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
-import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -19,35 +19,26 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import com.hechang.insighthub.common.BaseResponse;
 import com.hechang.insighthub.common.ResultUtils;
 import com.hechang.insighthub.model.dto.knowledge.CitationResponse;
-import com.hechang.insighthub.model.dto.task.AgentTaskResponseDto;
-import com.hechang.insighthub.model.dto.task.CreateResearchTaskRequest;
-import com.hechang.insighthub.model.dto.task.CreateTaskAcceptedResponse;
-import com.hechang.insighthub.model.dto.task.ReportResponse;
-import com.hechang.insighthub.model.dto.task.TaskControlResponse;
-import com.hechang.insighthub.model.dto.task.TaskEventResponse;
-import com.hechang.insighthub.model.dto.task.TaskSummaryResponse;
 import com.hechang.insighthub.service.ResearchTaskService;
 
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
+import lombok.RequiredArgsConstructor;
 
 /**
  * 工作空间内研究任务 API（JWT；支持异步 SSE）。
  */
 @RestController
 @RequestMapping("/api/v1/workspaces/{workspaceId}/research/tasks")
-@Validated
 @Tag(name = "ResearchTask")
 @SecurityRequirement(name = "BearerAuth")
+@RequiredArgsConstructor
 public class ResearchTaskController {
 
     private final ResearchTaskService researchTaskService;
 
-    public ResearchTaskController(ResearchTaskService researchTaskService) {
-        this.researchTaskService = researchTaskService;
-    }
 
     @PostMapping
     @Operation(summary = "异步创建研究任务（202）")
@@ -160,4 +151,20 @@ public class ResearchTaskController {
         return ResponseEntity.status(HttpStatus.ACCEPTED)
                 .body(ResultUtils.success(researchTaskService.retry(workspaceId, taskId)));
     }
+
+    @GetMapping("/{taskId}/plan")
+    @Operation(summary = "查询当前计划修订版")
+    public BaseResponse<PlanRevisionResponse> currentPlan(
+            @PathVariable String workspaceId, @PathVariable String taskId) {
+        return ResultUtils.success(researchTaskService.getCurrentPlan(workspaceId, taskId));
+    }
+
+    @GetMapping("/{taskId}/plans")
+    @Operation(summary = "查询计划历史")
+    public BaseResponse<List<PlanRevisionResponse>> planHistory(
+            @PathVariable String workspaceId, @PathVariable String taskId) {
+        return ResultUtils.success(researchTaskService.listPlanHistory(workspaceId, taskId));
+    }
+
+
 }

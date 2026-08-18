@@ -2,7 +2,6 @@ package com.hechang.insighthub.mapper;
 
 import java.util.List;
 
-import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
 import org.apache.ibatis.annotations.Update;
@@ -14,7 +13,6 @@ import com.mybatisflex.core.query.QueryWrapper;
 /**
  * 研究任务 Mapper。
  */
-@Mapper
 public interface ResearchTaskMapper extends BaseMapper<ResearchTask> {
 
     /** 按 ID + 工作空间查询（强制租户隔离）。 */

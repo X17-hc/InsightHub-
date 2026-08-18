@@ -13,21 +13,19 @@ import org.springframework.stereotype.Service;
 import com.hechang.insighthub.exception.BusinessException;
 import com.hechang.insighthub.config.TaskProperties;
 
+import lombok.RequiredArgsConstructor;
+
 /**
  * 用户级创建任务限流。
  */
 @Service
+@RequiredArgsConstructor
 public class TaskCreateRateLimiter {
 
     private static final Logger log = LoggerFactory.getLogger(TaskCreateRateLimiter.class);
 
     private final RedissonClient redissonClient;
     private final TaskProperties taskProperties;
-
-    public TaskCreateRateLimiter(RedissonClient redissonClient, TaskProperties taskProperties) {
-        this.redissonClient = redissonClient;
-        this.taskProperties = taskProperties;
-    }
 
     /**
      * 获取创建许可；超限 429。

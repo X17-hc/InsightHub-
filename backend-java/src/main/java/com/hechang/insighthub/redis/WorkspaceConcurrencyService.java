@@ -13,21 +13,19 @@ import com.hechang.insighthub.exception.ErrorCode;
 import com.hechang.insighthub.mapper.WorkspaceMapper;
 import com.hechang.insighthub.model.entity.Workspace;
 
+import lombok.RequiredArgsConstructor;
+
 /**
  * 工作空间并发槽（Redisson Semaphore）。
  */
 @Service
+@RequiredArgsConstructor
 public class WorkspaceConcurrencyService {
 
     private static final Logger log = LoggerFactory.getLogger(WorkspaceConcurrencyService.class);
 
     private final RedissonClient redissonClient;
     private final WorkspaceMapper workspaceMapper;
-
-    public WorkspaceConcurrencyService(RedissonClient redissonClient, WorkspaceMapper workspaceMapper) {
-        this.redissonClient = redissonClient;
-        this.workspaceMapper = workspaceMapper;
-    }
 
     private static String key(String workspaceId) {
         return "ih:ws:" + workspaceId + ":slots";

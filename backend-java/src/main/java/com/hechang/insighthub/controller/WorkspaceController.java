@@ -2,7 +2,6 @@ package com.hechang.insighthub.controller;
 
 import java.util.List;
 
-import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -22,21 +21,19 @@ import com.hechang.insighthub.service.WorkspaceService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
+import lombok.RequiredArgsConstructor;
 
 /**
  * 工作空间与成员 API。
  */
 @RestController
 @RequestMapping("/api/v1/workspaces")
-@Validated
 @Tag(name = "Workspace")
+@RequiredArgsConstructor
 public class WorkspaceController {
 
     private final WorkspaceService workspaceService;
 
-    public WorkspaceController(WorkspaceService workspaceService) {
-        this.workspaceService = workspaceService;
-    }
 
     @PostMapping
     @Operation(summary = "创建工作空间")

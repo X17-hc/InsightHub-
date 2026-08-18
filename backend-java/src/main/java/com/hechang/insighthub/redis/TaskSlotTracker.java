@@ -9,6 +9,8 @@ import org.slf4j.LoggerFactory;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
 
+import lombok.RequiredArgsConstructor;
+
 /**
  * 跟踪任务是否占用工作空间并发槽。
  *
@@ -16,6 +18,7 @@ import org.springframework.stereotype.Component;
  * 仅在真正 acquire 成功后调用 {@link #markHeld}。
  */
 @Component
+@RequiredArgsConstructor
 public class TaskSlotTracker {
 
     private static final Logger log = LoggerFactory.getLogger(TaskSlotTracker.class);
@@ -23,10 +26,6 @@ public class TaskSlotTracker {
     private final StringRedisTemplate redisTemplate;
     /** taskId -> 租约（本 JVM 缓存） */
     private final ConcurrentHashMap<String, SlotLease> localHeld = new ConcurrentHashMap<>();
-
-    public TaskSlotTracker(StringRedisTemplate redisTemplate) {
-        this.redisTemplate = redisTemplate;
-    }
 
     public static String slotKey(String taskId) {
         return "ih:task:" + taskId + ":slot";

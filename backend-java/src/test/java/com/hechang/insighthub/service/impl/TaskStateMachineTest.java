@@ -24,4 +24,9 @@ class TaskStateMachineTest {
                 BusinessException.class,
                 () -> stateMachine.transition(TaskStatus.PAUSED, TaskStatus.GENERATING));
     }
+
+    @Test
+    void planningTaskCanWaitForPlanApproval() {
+        assertDoesNotThrow(() -> stateMachine.transition(TaskStatus.PLANNING, TaskStatus.WAITING_APPROVAL));
+    }
 }

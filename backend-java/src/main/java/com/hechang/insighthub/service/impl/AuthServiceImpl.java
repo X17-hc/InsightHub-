@@ -1,5 +1,6 @@
 package com.hechang.insighthub.service.impl;
 
+import jakarta.annotation.Resource;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -37,21 +38,14 @@ import com.mybatisflex.core.update.UpdateChain;
 @Service
 public class AuthServiceImpl extends ServiceImpl<SysUserMapper, SysUser> implements AuthService {
 
-    private final SysRefreshTokenMapper refreshTokenMapper;
-    private final PasswordEncoder passwordEncoder;
-    private final JwtService jwtService;
-    private final JwtProperties jwtProperties;
-
-    public AuthServiceImpl(
-            SysRefreshTokenMapper refreshTokenMapper,
-            PasswordEncoder passwordEncoder,
-            JwtService jwtService,
-            JwtProperties jwtProperties) {
-        this.refreshTokenMapper = refreshTokenMapper;
-        this.passwordEncoder = passwordEncoder;
-        this.jwtService = jwtService;
-        this.jwtProperties = jwtProperties;
-    }
+    @Resource
+    private SysRefreshTokenMapper refreshTokenMapper;
+    @Resource
+    private PasswordEncoder passwordEncoder;
+    @Resource
+    private JwtService jwtService;
+    @Resource
+    private JwtProperties jwtProperties;
 
     @Override
     @Transactional

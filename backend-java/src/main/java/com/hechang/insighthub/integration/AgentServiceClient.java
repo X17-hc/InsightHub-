@@ -13,19 +13,18 @@ import org.springframework.web.reactive.function.client.WebClientResponseExcepti
 
 import com.hechang.insighthub.model.dto.task.AgentTaskResponseDto;
 
+import lombok.RequiredArgsConstructor;
+
 /**
  * 通过 WebClient 调用 Python Agent 服务。
  */
 @Component
+@RequiredArgsConstructor
 public class AgentServiceClient {
 
     private static final Logger log = LoggerFactory.getLogger(AgentServiceClient.class);
 
     private final WebClient agentWebClient;
-
-    public AgentServiceClient(WebClient agentWebClient) {
-        this.agentWebClient = agentWebClient;
-    }
 
     /**
      * 创建并同步执行 Agent 任务。

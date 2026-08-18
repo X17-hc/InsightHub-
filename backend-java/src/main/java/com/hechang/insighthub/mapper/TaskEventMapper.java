@@ -2,7 +2,6 @@ package com.hechang.insighthub.mapper;
 
 import java.time.LocalDateTime;
 import org.apache.ibatis.annotations.Insert;
-import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 
 import com.hechang.insighthub.model.entity.TaskEvent;
@@ -11,7 +10,6 @@ import com.mybatisflex.core.BaseMapper;
 /**
  * 任务事件 Mapper。
  */
-@Mapper
 public interface TaskEventMapper extends BaseMapper<TaskEvent> {
 
     /**

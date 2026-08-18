@@ -1,5 +1,6 @@
 package com.hechang.insighthub.service.impl;
 
+import jakarta.annotation.Resource;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -13,12 +14,10 @@ import java.util.UUID;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.context.annotation.Lazy;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.transaction.support.TransactionSynchronization;
-import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.web.multipart.MultipartFile;
 
 import com.hechang.insighthub.config.UploadProperties;
@@ -31,7 +30,6 @@ import com.hechang.insighthub.model.dto.knowledge.DocumentResponse;
 import com.hechang.insighthub.model.dto.knowledge.KnowledgeBaseResponse;
 import com.hechang.insighthub.model.entity.KbDocument;
 import com.hechang.insighthub.model.entity.KnowledgeBase;
-import com.hechang.insighthub.security.SecurityUtils;
 import com.hechang.insighthub.service.KnowledgeService;
 import com.hechang.insighthub.service.WorkspaceAccessService;
 import com.mybatisflex.core.query.QueryWrapper;
@@ -56,31 +54,21 @@ public class KnowledgeServiceImpl extends ServiceImpl<KnowledgeBaseMapper, Knowl
     private static final String PARSE_INDEXED = "INDEXED";
     private static final String PARSE_FAILED = "FAILED";
 
-    private final WorkspaceAccessService accessService;
-    private final DocumentMapper documentMapper;
-    private final UploadProperties uploadProperties;
-    private final KnowledgeIngestClient ingestClient;
-    /** 自引用代理，确保 @Async 经 Spring 代理生效 */
-    private final KnowledgeService self;
-
-    public KnowledgeServiceImpl(
-            WorkspaceAccessService accessService,
-            DocumentMapper documentMapper,
-            UploadProperties uploadProperties,
-            KnowledgeIngestClient ingestClient,
-            @Lazy KnowledgeService self) {
-        this.accessService = accessService;
-        this.documentMapper = documentMapper;
-        this.uploadProperties = uploadProperties;
-        this.ingestClient = ingestClient;
-        this.self = self;
-    }
+    @Resource
+    private WorkspaceAccessService accessService;
+    @Resource
+    private DocumentMapper documentMapper;
+    @Resource
+    private UploadProperties uploadProperties;
+    @Resource
+    private KnowledgeIngestClient ingestClient;
+    @Resource
+    private ApplicationEventPublisher eventPublisher;
 
     @Override
     @Transactional
     public KnowledgeBaseResponse create(String workspaceId, CreateKnowledgeBaseRequest request) {
-        String userId = SecurityUtils.requireUserId();
-        accessService.requireMember(workspaceId, userId);
+        String userId = accessService.requireCurrentMember(workspaceId).userId();
 
         String id = "kb-" + UUID.randomUUID().toString().replace("-", "").substring(0, 12);
         KnowledgeBase entity = new KnowledgeBase();
@@ -100,8 +88,7 @@ public class KnowledgeServiceImpl extends ServiceImpl<KnowledgeBaseMapper, Knowl
 
     @Override
     public List<KnowledgeBaseResponse> list(String workspaceId) {
-        String userId = SecurityUtils.requireUserId();
-        accessService.requireMember(workspaceId, userId);
+        accessService.requireCurrentMember(workspaceId);
         return list(QueryWrapper.create()
                 .eq(KnowledgeBase::getWorkspaceId, workspaceId)
                 .orderBy(KnowledgeBase::getCreatedAt, false))
@@ -110,8 +97,7 @@ public class KnowledgeServiceImpl extends ServiceImpl<KnowledgeBaseMapper, Knowl
 
     @Override
     public KnowledgeBaseResponse get(String workspaceId, String kbId) {
-        String userId = SecurityUtils.requireUserId();
-        accessService.requireMember(workspaceId, userId);
+        accessService.requireCurrentMember(workspaceId);
         KnowledgeBase kb = requireKb(workspaceId, kbId);
         return toKbResponse(kb);
     }
@@ -119,8 +105,7 @@ public class KnowledgeServiceImpl extends ServiceImpl<KnowledgeBaseMapper, Knowl
     @Override
     @Transactional
     public KnowledgeBaseResponse disable(String workspaceId, String kbId) {
-        String userId = SecurityUtils.requireUserId();
-        accessService.requireAdmin(workspaceId, userId);
+        accessService.requireCurrentAdmin(workspaceId);
         requireKb(workspaceId, kbId);
 
         updateKnowledgeBaseStatus(kbId, workspaceId, STATUS_DISABLED);
@@ -136,8 +121,7 @@ public class KnowledgeServiceImpl extends ServiceImpl<KnowledgeBaseMapper, Knowl
     @Override
     @Transactional
     public DocumentResponse uploadDocument(String workspaceId, String kbId, MultipartFile file) {
-        String userId = SecurityUtils.requireUserId();
-        accessService.requireMember(workspaceId, userId);
+        String userId = accessService.requireCurrentMember(workspaceId).userId();
         KnowledgeBase kb = requireKb(workspaceId, kbId);
         if (!STATUS_ACTIVE.equals(kb.getStatus())) {
             throw BusinessException.conflict("KB_DISABLED", "knowledge base is disabled");
@@ -227,8 +211,7 @@ public class KnowledgeServiceImpl extends ServiceImpl<KnowledgeBaseMapper, Knowl
 
     @Override
     public List<DocumentResponse> listDocuments(String workspaceId, String kbId) {
-        String userId = SecurityUtils.requireUserId();
-        accessService.requireMember(workspaceId, userId);
+        accessService.requireCurrentMember(workspaceId);
         requireKb(workspaceId, kbId);
         return documentMapper.selectListByQuery(QueryWrapper.create()
                 .eq(KbDocument::getKnowledgeBaseId, kbId)
@@ -239,8 +222,7 @@ public class KnowledgeServiceImpl extends ServiceImpl<KnowledgeBaseMapper, Knowl
 
     @Override
     public DocumentResponse getDocument(String workspaceId, String kbId, String docId) {
-        String userId = SecurityUtils.requireUserId();
-        accessService.requireMember(workspaceId, userId);
+        accessService.requireCurrentMember(workspaceId);
         requireKb(workspaceId, kbId);
         return toDocResponse(requireDoc(workspaceId, kbId, docId));
     }
@@ -248,8 +230,7 @@ public class KnowledgeServiceImpl extends ServiceImpl<KnowledgeBaseMapper, Knowl
     @Override
     @Transactional
     public DocumentResponse reindex(String workspaceId, String kbId, String docId) {
-        String userId = SecurityUtils.requireUserId();
-        accessService.requireMember(workspaceId, userId);
+        accessService.requireCurrentMember(workspaceId);
         KnowledgeBase kb = requireKb(workspaceId, kbId);
         if (!STATUS_ACTIVE.equals(kb.getStatus())) {
             throw BusinessException.conflict("KB_DISABLED", "knowledge base is disabled");
@@ -260,18 +241,9 @@ public class KnowledgeServiceImpl extends ServiceImpl<KnowledgeBaseMapper, Knowl
         return toDocResponse(requireDoc(workspaceId, kbId, docId));
     }
 
-    /** 事务提交后再触发 @Async ingest，避免读不到未提交文档 */
+    /** 发布事件；监听器会在事务提交后触发异步入库，避免读到未提交文档。 */
     private void scheduleIngestAfterCommit(String workspaceId, String kbId, String docId) {
-        if (TransactionSynchronizationManager.isSynchronizationActive()) {
-            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
-                @Override
-                public void afterCommit() {
-                    self.ingestDocument(workspaceId, kbId, docId);
-                }
-            });
-        } else {
-            self.ingestDocument(workspaceId, kbId, docId);
-        }
+        eventPublisher.publishEvent(new DocumentIngestRequested(workspaceId, kbId, docId));
     }
 
     @Override

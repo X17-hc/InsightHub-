@@ -1,5 +1,6 @@
 package com.hechang.insighthub.service.impl;
 
+import jakarta.annotation.Resource;
 import java.io.IOException;
 import java.time.ZoneOffset;
 import java.util.List;
@@ -41,12 +42,18 @@ public class TaskEventSseHub {
 
     private static final Logger log = LoggerFactory.getLogger(TaskEventSseHub.class);
 
-    private final ResearchTaskMapper researchTaskMapper;
-    private final TaskEventMapper taskEventMapper;
-    private final RedisMessageListenerContainer listenerContainer;
-    private final ObjectMapper objectMapper;
-    private final TaskEventService taskEventService;
-    private final TaskProperties taskProperties;
+    @Resource
+    private ResearchTaskMapper researchTaskMapper;
+    @Resource
+    private TaskEventMapper taskEventMapper;
+    @Resource
+    private RedisMessageListenerContainer listenerContainer;
+    @Resource
+    private ObjectMapper objectMapper;
+    @Resource
+    private TaskEventService taskEventService;
+    @Resource
+    private TaskProperties taskProperties;
     private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(2, r -> {
         Thread t = new Thread(r, "ih-sse-scheduler");
         t.setDaemon(true);
@@ -55,21 +62,6 @@ public class TaskEventSseHub {
 
     /** taskId -> emitters */
     private final ConcurrentHashMap<String, CopyOnWriteArrayList<EmitterSession>> sessions = new ConcurrentHashMap<>();
-
-    public TaskEventSseHub(
-            ResearchTaskMapper researchTaskMapper,
-            TaskEventMapper taskEventMapper,
-            RedisMessageListenerContainer listenerContainer,
-            ObjectMapper objectMapper,
-            TaskEventService taskEventService,
-            TaskProperties taskProperties) {
-        this.researchTaskMapper = researchTaskMapper;
-        this.taskEventMapper = taskEventMapper;
-        this.listenerContainer = listenerContainer;
-        this.objectMapper = objectMapper;
-        this.taskEventService = taskEventService;
-        this.taskProperties = taskProperties;
-    }
 
     /**
      * 建立 SSE：先回放再订阅 live；并启动 DB 轮询作为 Redis Pub/Sub 降级。

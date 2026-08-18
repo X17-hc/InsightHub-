@@ -2,7 +2,6 @@ package com.hechang.insighthub.mapper;
 
 import java.util.List;
 
-import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
 
@@ -12,7 +11,6 @@ import com.mybatisflex.core.BaseMapper;
 /**
  * 工作空间 Mapper。
  */
-@Mapper
 public interface WorkspaceMapper extends BaseMapper<Workspace> {
 
     /**

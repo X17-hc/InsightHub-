@@ -1,5 +1,6 @@
 package com.hechang.insighthub.service.impl;
 
+import jakarta.annotation.Resource;
 import java.util.UUID;
 import java.util.List;
 import java.util.Map;
@@ -21,13 +22,10 @@ public class TaskResultService {
 
     private static final Logger log = LoggerFactory.getLogger(TaskResultService.class);
 
-    private final ReportMapper reportMapper;
-    private final CitationMapper citationMapper;
-
-    public TaskResultService(ReportMapper reportMapper, CitationMapper citationMapper) {
-        this.reportMapper = reportMapper;
-        this.citationMapper = citationMapper;
-    }
+    @Resource
+    private ReportMapper reportMapper;
+    @Resource
+    private CitationMapper citationMapper;
 
     public String saveReportAndCitations(String taskId, String workspaceId, String markdown, JsonNode citationsNode) {
         List<Map<String, Object>> citations = new java.util.ArrayList<>();

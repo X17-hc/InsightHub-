@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from app.graph.events import make_event
-from app.schemas.protocol import AgentError, AgentEvent, AgentTaskResponse
+from app.schemas.protocol import AgentError, AgentEvent, AgentTaskResponse, Plan
 
 
 def response_from_state(
@@ -15,28 +15,43 @@ def response_from_state(
     state: dict[str, Any],
 ) -> AgentTaskResponse:
     """将 LangGraph 终态转换为稳定的 AgentTaskResponse。"""
-    events = list(state.get("events") or [])
+    raw_events = list(state.get("events") or [])
+    events = tuple(AgentEvent.model_validate(event) for event in raw_events)
     status = state.get("status") or ("COMPLETED" if state.get("report") else "FAILED")
     report = state.get("report")
+    if status == "WAITING_APPROVAL":
+        return AgentTaskResponse(
+            taskId=task_id,
+            runId=run_id,
+            status="WAITING_APPROVAL",
+            planRevision=int(state.get("plan_revision") or 1),
+            planHash=state.get("plan_hash"),
+            plan=Plan.model_validate(state["plan"]),
+            events=events,
+            reportMarkdown=None,
+            citations=(),
+            error=None,
+        )
     if status == "FAILED" or not report:
         errors = state.get("errors") or [{"code": "UNKNOWN", "message": "no report"}]
         first = errors[0] if isinstance(errors[0], dict) else {"code": "UNKNOWN", "message": str(errors[0])}
-        if not any(event.get("type") == "TASK_FAILED" for event in events):
-            events.append(
+        if not any(event.get("type") == "TASK_FAILED" for event in raw_events):
+            raw_events.append(
                 make_event(
-                    events,
+                    raw_events,
                     task_id=task_id,
                     run_id=run_id,
                     event_type="TASK_FAILED",
                     data=first,
                 )
             )
+        events = tuple(AgentEvent.model_validate(event) for event in raw_events)
         return AgentTaskResponse(
             taskId=task_id,
             runId=run_id,
             status="FAILED",
             reportMarkdown=report,
-            events=[AgentEvent.model_validate(event) for event in events],
+            events=events,
             citations=list(state.get("citations") or []),
             error=AgentError(
                 code=str(first.get("code") or "AGENT_EXECUTION_FAILED"),
@@ -50,7 +65,7 @@ def response_from_state(
         runId=run_id,
         status="COMPLETED",
         reportMarkdown=report,
-        events=[AgentEvent.model_validate(event) for event in events],
+        events=events,
         citations=list(state.get("citations") or []),
         error=None,
     )

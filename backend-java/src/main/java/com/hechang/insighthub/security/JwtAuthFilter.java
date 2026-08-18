@@ -20,6 +20,7 @@ import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import lombok.RequiredArgsConstructor;
 
 /**
  * 从 Authorization: Bearer 解析 JWT 并注入 SecurityContext。
@@ -27,20 +28,12 @@ import jakarta.servlet.http.HttpServletResponse;
  * 否则会变成 Anonymous 并触发 AccessDenied（响应已 committed 时还会连环报错）。
  */
 @Component
+@RequiredArgsConstructor
 public class JwtAuthFilter extends OncePerRequestFilter {
 
     private final JwtService jwtService;
     private final SysUserMapper sysUserMapper;
     private final SecurityContextRepository securityContextRepository;
-
-    public JwtAuthFilter(
-            JwtService jwtService,
-            SysUserMapper sysUserMapper,
-            SecurityContextRepository securityContextRepository) {
-        this.jwtService = jwtService;
-        this.sysUserMapper = sysUserMapper;
-        this.securityContextRepository = securityContextRepository;
-    }
 
     /**
      * 允许在 Servlet ASYNC 派发时执行本 Filter（SseEmitter 心跳/推送会触发）。

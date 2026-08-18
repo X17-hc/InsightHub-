@@ -1,5 +1,6 @@
 package com.hechang.insighthub.service.impl;
 
+import jakarta.annotation.Resource;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
@@ -18,7 +19,6 @@ import com.hechang.insighthub.model.dto.task.PlanRevisionResponse;
 import com.hechang.insighthub.model.entity.ResearchTask;
 import com.hechang.insighthub.model.entity.TaskPlanRevision;
 import com.hechang.insighthub.model.enums.TaskStatus;
-import com.hechang.insighthub.security.SecurityUtils;
 import com.hechang.insighthub.service.PlanApplicationService;
 import com.hechang.insighthub.service.WorkspaceAccessService;
 import com.mybatisflex.core.query.QueryChain;
@@ -31,18 +31,12 @@ public class PlanApplicationServiceImpl extends ServiceImpl<TaskPlanRevisionMapp
     private static final List<String> CURRENT_PLAN_STATUSES = List.of("PENDING", "APPROVED");
     private static final String PLAN_PENDING = "PENDING";
 
-    private final ResearchTaskMapper taskMapper;
-    private final WorkspaceAccessService accessService;
-    private final ObjectMapper objectMapper;
-
-    public PlanApplicationServiceImpl(
-            ResearchTaskMapper taskMapper,
-            WorkspaceAccessService accessService,
-            ObjectMapper objectMapper) {
-        this.taskMapper = taskMapper;
-        this.accessService = accessService;
-        this.objectMapper = objectMapper;
-    }
+    @Resource
+    private ResearchTaskMapper taskMapper;
+    @Resource
+    private WorkspaceAccessService accessService;
+    @Resource
+    private ObjectMapper objectMapper;
 
     @Override
     public PlanRevisionResponse current(String workspaceId, String taskId) {
@@ -109,7 +103,7 @@ public class PlanApplicationServiceImpl extends ServiceImpl<TaskPlanRevisionMapp
     }
 
     private void requireTaskMember(String workspaceId, String taskId) {
-        accessService.requireMember(workspaceId, SecurityUtils.requireUserId());
+        accessService.requireCurrentMember(workspaceId);
         boolean exists = QueryChain.of(taskMapper)
                 .eq(ResearchTask::getId, taskId)
                 .eq(ResearchTask::getWorkspaceId, workspaceId)

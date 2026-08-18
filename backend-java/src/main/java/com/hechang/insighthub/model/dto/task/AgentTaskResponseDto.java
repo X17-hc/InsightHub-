@@ -18,6 +18,9 @@ public class AgentTaskResponseDto {
     private String runId;
     private String traceId;
     private String status;
+    private Integer planRevision;
+    private String planHash;
+    private Map<String, Object> plan;
     private String reportMarkdown;
     private List<AgentEventDto> events = new ArrayList<>();
     /** 结构化引用（供落库 citation） */

@@ -41,7 +41,7 @@ class Plan(StrictModel):
     objective: str = Field(min_length=1, max_length=4000)
     tasks: tuple[PlanTask, ...] = Field(min_length=1, max_length=3)
 
-    @field_validator("task")
+    @field_validator("tasks")
     @classmethod
     def unique_task_ids(cls, value: tuple[PlanTask, ...]) -> tuple[PlanTask, ...]:
         ids = [item.id for item in value]
@@ -59,7 +59,7 @@ class ResumeTaskRequest(StrictModel):
     approved_plan_hash: str | None = Field(default=None, alias="approvedPlanHash")
 
 
-class AgentTaskRequest(BaseModel):
+class AgentTaskRequest(StrictModel):
     """创建 Agent 任务请求体。"""
 
     task_id: str = Field(alias="taskId", min_length=1, max_length=64)

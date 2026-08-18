@@ -23,7 +23,12 @@ def claim_step(state: ResearchState, node: str) -> tuple[int, dict[str, Any] | N
         run_id=state["run_id"],
         event_type="TASK_FAILED",
         node=node,
-        data={"code": "MAX_STEPS_EXCEEDED", "stepCount": step, "maxSteps": max_steps},
+        data={
+            "code": "MAX_STEPS_EXCEEDED",
+            "failedNode": node,
+            "stepCount": step,
+            "maxSteps": max_steps,
+        },
     )
     return step, {
         "step_count": step,

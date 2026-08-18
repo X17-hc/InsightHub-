@@ -47,6 +47,7 @@ def _build_init_state(
         "user_query": request.query,
         "clarified_query": None,
         "phase": request.phase,
+        "require_plan_approval": request.config.require_plan_approval,
         "plan_revision": request.plan_revision or 1,
         "revision_instruction": request.revision_instruction,
         "plan": None,
@@ -143,6 +144,27 @@ def run_research_task(request: AgentTaskRequest, trace_id: str | None = None) ->
                 traceId=trace,
             ),
         )
+
+    if isinstance(final_state, dict) and "__interrupt__" in final_state:
+        values = checkpoint_values(graph, request.task_id)
+        approval_event = make_event(
+            events=list(values.get("events") or []),
+            task_id=request.task_id,
+            run_id=run_id,
+            event_type="APPROVAL_REQUIRED",
+            node="wait_for_approval",
+            data={
+                "planRevision": values.get("plan_revision") or 1,
+                "planHash": values.get("plan_hash"),
+            },
+        )
+        _persist_control_event(graph, {"configurable": {"thread_id": request.task_id}}, approval_event,
+                               status="WAITING_APPROVAL")
+        final_state = {
+            **values,
+            "status": "WAITING_APPROVAL",
+            "events": list(values.get("events") or []) + [approval_event],
+        }
 
     return response_from_state(request.task_id, run_id, trace, final_state)
 

@@ -1,5 +1,6 @@
 package com.hechang.insighthub.service.impl;
 
+import jakarta.annotation.Resource;
 import java.util.List;
 import java.util.UUID;
 
@@ -20,6 +21,7 @@ import com.hechang.insighthub.model.enums.WorkspaceRole;
 import com.hechang.insighthub.security.SecurityUtils;
 import com.hechang.insighthub.service.WorkspaceAccessService;
 import com.hechang.insighthub.service.WorkspaceService;
+import com.hechang.insighthub.service.CurrentWorkspaceAccess;
 import com.mybatisflex.core.query.QueryWrapper;
 import com.mybatisflex.spring.service.impl.ServiceImpl;
 
@@ -29,18 +31,12 @@ import com.mybatisflex.spring.service.impl.ServiceImpl;
 @Service
 public class WorkspaceServiceImpl extends ServiceImpl<WorkspaceMapper, Workspace> implements WorkspaceService {
 
-    private final WorkspaceAccessService accessService;
-    private final WorkspaceMemberMapper memberMapper;
-    private final SysUserMapper userMapper;
-
-    public WorkspaceServiceImpl(
-            WorkspaceAccessService accessService,
-            WorkspaceMemberMapper memberMapper,
-            SysUserMapper userMapper) {
-        this.accessService = accessService;
-        this.memberMapper = memberMapper;
-        this.userMapper = userMapper;
-    }
+    @Resource
+    private WorkspaceAccessService accessService;
+    @Resource
+    private WorkspaceMemberMapper memberMapper;
+    @Resource
+    private SysUserMapper userMapper;
 
     @Override
     @Transactional
@@ -76,8 +72,7 @@ public class WorkspaceServiceImpl extends ServiceImpl<WorkspaceMapper, Workspace
 
     @Override
     public WorkspaceResponse get(String workspaceId) {
-        String userId = SecurityUtils.requireUserId();
-        accessService.requireMember(workspaceId, userId);
+        accessService.requireCurrentMember(workspaceId);
         Workspace workspace = getById(workspaceId);
         if (workspace == null) {
             throw BusinessException.notFound("workspace not found");
@@ -87,16 +82,15 @@ public class WorkspaceServiceImpl extends ServiceImpl<WorkspaceMapper, Workspace
 
     @Override
     public List<MemberResponse> listMembers(String workspaceId) {
-        String userId = SecurityUtils.requireUserId();
-        accessService.requireMember(workspaceId, userId);
+        accessService.requireCurrentMember(workspaceId);
         return memberMapper.listMembers(workspaceId);
     }
 
     @Override
     @Transactional
     public MemberResponse addMember(String workspaceId, AddMemberRequest request) {
-        String actorId = SecurityUtils.requireUserId();
-        WorkspaceRole actorRole = accessService.requireAdmin(workspaceId, actorId);
+        CurrentWorkspaceAccess actor = accessService.requireCurrentAdmin(workspaceId);
+        WorkspaceRole actorRole = actor.role();
         if (userMapper.selectOneById(request.getUserId()) == null) {
             throw BusinessException.notFound("user not found");
         }
@@ -131,8 +125,8 @@ public class WorkspaceServiceImpl extends ServiceImpl<WorkspaceMapper, Workspace
     @Override
     @Transactional
     public void removeMember(String workspaceId, String targetUserId) {
-        String actorId = SecurityUtils.requireUserId();
-        WorkspaceRole actorRole = accessService.requireAdmin(workspaceId, actorId);
+        CurrentWorkspaceAccess actor = accessService.requireCurrentAdmin(workspaceId);
+        WorkspaceRole actorRole = actor.role();
         Workspace workspace = getById(workspaceId);
         if (workspace != null && targetUserId.equals(workspace.getOwnerId())) {
             throw BusinessException.conflict("PRIMARY_OWNER", "primary owner cannot be removed");

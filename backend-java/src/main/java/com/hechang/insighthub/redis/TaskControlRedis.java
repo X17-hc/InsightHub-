@@ -7,10 +7,13 @@ import org.slf4j.LoggerFactory;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
 
+import lombok.RequiredArgsConstructor;
+
 /**
  * 任务控制字与事件 Pub/Sub。
  */
 @Component
+@RequiredArgsConstructor
 public class TaskControlRedis {
 
     public static final String CONTROL_RUNNING = "RUNNING";
@@ -20,10 +23,6 @@ public class TaskControlRedis {
     private static final Logger log = LoggerFactory.getLogger(TaskControlRedis.class);
 
     private final StringRedisTemplate redisTemplate;
-
-    public TaskControlRedis(StringRedisTemplate redisTemplate) {
-        this.redisTemplate = redisTemplate;
-    }
 
     public static String controlKey(String taskId) {
         return "ih:task:" + taskId + ":control";

@@ -1,5 +1,6 @@
 package com.hechang.insighthub.service.impl;
 
+import jakarta.annotation.Resource;
 import java.sql.Timestamp;
 import java.util.List;
 
@@ -18,7 +19,6 @@ import com.hechang.insighthub.model.entity.Citation;
 import com.hechang.insighthub.model.entity.Report;
 import com.hechang.insighthub.model.entity.ResearchTask;
 import com.hechang.insighthub.model.entity.TaskEvent;
-import com.hechang.insighthub.security.SecurityUtils;
 import com.hechang.insighthub.service.WorkspaceAccessService;
 import com.mybatisflex.core.query.QueryWrapper;
 
@@ -26,27 +26,18 @@ import com.mybatisflex.core.query.QueryWrapper;
 @Service
 public class ResearchTaskQueryService {
 
-    private final ResearchTaskMapper researchTaskMapper;
-    private final ReportMapper reportMapper;
-    private final CitationMapper citationMapper;
-    private final TaskEventMapper taskEventMapper;
-    private final WorkspaceAccessService accessService;
-    private final TaskEventService taskEventService;
-
-    public ResearchTaskQueryService(
-            ResearchTaskMapper researchTaskMapper,
-            ReportMapper reportMapper,
-            CitationMapper citationMapper,
-            TaskEventMapper taskEventMapper,
-            WorkspaceAccessService accessService,
-            TaskEventService taskEventService) {
-        this.researchTaskMapper = researchTaskMapper;
-        this.reportMapper = reportMapper;
-        this.citationMapper = citationMapper;
-        this.taskEventMapper = taskEventMapper;
-        this.accessService = accessService;
-        this.taskEventService = taskEventService;
-    }
+    @Resource
+    private ResearchTaskMapper researchTaskMapper;
+    @Resource
+    private ReportMapper reportMapper;
+    @Resource
+    private CitationMapper citationMapper;
+    @Resource
+    private TaskEventMapper taskEventMapper;
+    @Resource
+    private WorkspaceAccessService accessService;
+    @Resource
+    private TaskEventService taskEventService;
 
     public List<TaskSummaryResponse> list(String workspaceId) {
         requireMembership(workspaceId);
@@ -98,7 +89,7 @@ public class ResearchTaskQueryService {
     }
 
     private void requireMembership(String workspaceId) {
-        accessService.requireMember(workspaceId, SecurityUtils.requireUserId());
+        accessService.requireCurrentMember(workspaceId);
     }
 
     private ResearchTask requireTask(String workspaceId, String taskId) {

@@ -2,7 +2,6 @@ package com.hechang.insighthub.mapper;
 
 import java.util.List;
 
-import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
 
@@ -13,7 +12,6 @@ import com.mybatisflex.core.BaseMapper;
 /**
  * 工作空间成员 Mapper。
  */
-@Mapper
 public interface WorkspaceMemberMapper extends BaseMapper<WorkspaceMember> {
     /**
      * 列出工作空间成员（JOIN sys_user，字段对齐 MemberResponse）。

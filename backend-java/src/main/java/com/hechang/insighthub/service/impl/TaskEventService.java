@@ -1,5 +1,6 @@
 package com.hechang.insighthub.service.impl;
 
+import jakarta.annotation.Resource;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
@@ -22,13 +23,10 @@ import com.mybatisflex.core.query.QueryWrapper;
 @Service
 public class TaskEventService {
 
-    private final TaskEventMapper mapper;
-    private final ObjectMapper objectMapper;
-
-    public TaskEventService(TaskEventMapper mapper, ObjectMapper objectMapper) {
-        this.mapper = mapper;
-        this.objectMapper = objectMapper;
-    }
+    @Resource
+    private TaskEventMapper mapper;
+    @Resource
+    private ObjectMapper objectMapper;
 
     public AgentEventDto toDto(JsonNode node) {
         AgentEventDto dto = new AgentEventDto();
@@ -180,12 +178,12 @@ public class TaskEventService {
         return value == null || value.isNull() ? null : value.asText();
     }
 
-    private static Object unwrap(JsonNode node) {
+    private Object unwrap(JsonNode node) {
         if (node == null || node.isNull()) return null;
         if (node.isTextual()) return node.asText();
         if (node.isNumber()) return node.numberValue();
         if (node.isBoolean()) return node.asBoolean();
-        return node.toString();
+        return objectMapper.convertValue(node, Object.class);
     }
 
     public record StoredEvent(long eventNo, String json) {

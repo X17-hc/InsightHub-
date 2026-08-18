@@ -1,5 +1,6 @@
 package com.hechang.insighthub.service.impl;
 
+import jakarta.annotation.Resource;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -31,6 +32,7 @@ import com.hechang.insighthub.redis.TaskControlRedis;
 import com.hechang.insighthub.redis.TaskSlotTracker;
 import com.hechang.insighthub.redis.WorkspaceConcurrencyService;
 import com.hechang.insighthub.service.TaskExecutionService;
+import com.hechang.insighthub.service.PlanApplicationService;
 
 /**
  * 异步消费 Python NDJSON 流并落库 / 推送实现。
@@ -40,51 +42,36 @@ public class TaskExecutionServiceImpl implements TaskExecutionService {
 
     private static final Logger log = LoggerFactory.getLogger(TaskExecutionServiceImpl.class);
 
-    private final AgentStreamClient agentStreamClient;
-    private final ResearchTaskMapper researchTaskMapper;
-    private final TaskEventMapper taskEventMapper;
-    private final TaskEventService taskEventService;
-    private final TaskResultService taskResultService;
-    private final TaskStateMachine stateMachine;
-    private final TaskControlRedis taskControlRedis;
-    private final WorkspaceConcurrencyService concurrencyService;
-    private final TaskSlotTracker slotTracker;
-    private final TaskEventSseHub sseHub;
-    private final TaskStreamLease streamLease;
-    private final ObjectMapper objectMapper;
-    private final TaskProperties taskProperties;
-    private final TransactionTemplate transactionTemplate;
-
-    public TaskExecutionServiceImpl(
-            AgentStreamClient agentStreamClient,
-            ResearchTaskMapper researchTaskMapper,
-            TaskEventMapper taskEventMapper,
-            TaskEventService taskEventService,
-            TaskResultService taskResultService,
-            TaskStateMachine stateMachine,
-            TaskControlRedis taskControlRedis,
-            WorkspaceConcurrencyService concurrencyService,
-            TaskSlotTracker slotTracker,
-            TaskEventSseHub sseHub,
-            TaskStreamLease streamLease,
-            ObjectMapper objectMapper,
-            TaskProperties taskProperties,
-            TransactionTemplate transactionTemplate) {
-        this.agentStreamClient = agentStreamClient;
-        this.researchTaskMapper = researchTaskMapper;
-        this.taskEventMapper = taskEventMapper;
-        this.taskEventService = taskEventService;
-        this.taskResultService = taskResultService;
-        this.stateMachine = stateMachine;
-        this.taskControlRedis = taskControlRedis;
-        this.concurrencyService = concurrencyService;
-        this.slotTracker = slotTracker;
-        this.sseHub = sseHub;
-        this.streamLease = streamLease;
-        this.objectMapper = objectMapper;
-        this.taskProperties = taskProperties;
-        this.transactionTemplate = transactionTemplate;
-    }
+    @Resource
+    private AgentStreamClient agentStreamClient;
+    @Resource
+    private ResearchTaskMapper researchTaskMapper;
+    @Resource
+    private TaskEventMapper taskEventMapper;
+    @Resource
+    private TaskEventService taskEventService;
+    @Resource
+    private TaskResultService taskResultService;
+    @Resource
+    private TaskStateMachine stateMachine;
+    @Resource
+    private TaskControlRedis taskControlRedis;
+    @Resource
+    private WorkspaceConcurrencyService concurrencyService;
+    @Resource
+    private TaskSlotTracker slotTracker;
+    @Resource
+    private TaskEventSseHub sseHub;
+    @Resource
+    private TaskStreamLease streamLease;
+    @Resource
+    private ObjectMapper objectMapper;
+    @Resource
+    private TaskProperties taskProperties;
+    @Resource
+    private TransactionTemplate transactionTemplate;
+    @Resource
+    private PlanApplicationService planApplicationService;
 
     @Override
     @Async("taskExecutor")
@@ -120,7 +107,9 @@ public class TaskExecutionServiceImpl implements TaskExecutionService {
             }
             // 若流结束仍非终态（异常静默），检查 DB
             ResearchTask row = researchTaskMapper.findByIdAndWorkspace(taskId, workspaceId);
-            if (row != null && !isTerminal(row.getStatus()) && !TaskStatus.PAUSED.matches(row.getStatus())) {
+            if (row != null && !isTerminal(row.getStatus())
+                    && !TaskStatus.PAUSED.matches(row.getStatus())
+                    && !TaskStatus.WAITING_APPROVAL.matches(row.getStatus())) {
                 markFailed(taskId, workspaceId, null, "AGENT_STREAM_INCOMPLETE", "stream ended without result");
             }
         } catch (Exception ex) {
@@ -137,12 +126,16 @@ public class TaskExecutionServiceImpl implements TaskExecutionService {
         } finally {
             streamLease.release(taskId, generation);
             ResearchTask row = researchTaskMapper.findByIdAndWorkspace(taskId, workspaceId);
-            if (row != null && isTerminal(row.getStatus())) {
+            if (row != null && (isTerminal(row.getStatus())
+                    || TaskStatus.PAUSED.matches(row.getStatus())
+                    || TaskStatus.WAITING_APPROVAL.matches(row.getStatus()))) {
                 slotTracker.releaseOnce(
                         taskId,
                         workspaceId,
                         permitId -> concurrencyService.release(workspaceId, permitId));
-                sseHub.completeTask(taskId);
+                if (isTerminal(row.getStatus())) {
+                    sseHub.completeTask(taskId);
+                }
             }
         }
     }
@@ -168,7 +161,8 @@ public class TaskExecutionServiceImpl implements TaskExecutionService {
                 }
             });
             if (published.get() != null) {
-                if (TaskStatus.PAUSED.matches(text(node, "status"))) {
+                if (TaskStatus.PAUSED.matches(text(node, "status"))
+                        || TaskStatus.WAITING_APPROVAL.matches(text(node, "status"))) {
                     slotTracker.releaseOnce(
                             taskId,
                             workspaceId,
@@ -263,10 +257,24 @@ public class TaskExecutionServiceImpl implements TaskExecutionService {
         boolean paused = TaskStatus.PAUSED.matches(current) || TaskStatus.PAUSING.matches(current);
         switch (type) {
             case "PLAN_CREATED" -> {
-                if (!paused && TaskStatus.RUNNING.matches(current)) {
+                if (!paused && (TaskStatus.PLANNING.matches(current) || TaskStatus.RUNNING.matches(current))) {
+                    planApplicationService.recordPlannerResult(
+                            taskId,
+                            workspaceId,
+                            task.getCreatorId(),
+                            event.getRunId(),
+                            event.getData());
+                }
+            }
+            case "APPROVAL_REQUIRED" -> {
+                if (TaskStatus.PLANNING.matches(current) || TaskStatus.RUNNING.matches(current)) {
                     researchTaskMapper.updateStatusIfCurrent(
-                            taskId, workspaceId, TaskStatus.RUNNING.name(),
-                            TaskStatus.RUNNING.name(), 20, node);
+                            taskId,
+                            workspaceId,
+                            current,
+                            TaskStatus.WAITING_APPROVAL.name(),
+                            30,
+                            "wait_for_approval");
                 }
             }
             case "NODE_STARTED", "NODE_COMPLETED" -> {
@@ -330,6 +338,18 @@ public class TaskExecutionServiceImpl implements TaskExecutionService {
             if (TaskStatus.RUNNING.matches(currentStatus) || TaskStatus.PAUSING.matches(currentStatus)) {
                 stateMachine.transition(TaskStatus.valueOf(currentStatus), TaskStatus.PAUSED);
                 researchTaskMapper.updateStatus(taskId, workspaceId, TaskStatus.PAUSED.name(), null, null);
+            }
+            return true;
+        }
+        if (TaskStatus.WAITING_APPROVAL.matches(status)) {
+            if (!TaskStatus.WAITING_APPROVAL.matches(currentStatus)) {
+                researchTaskMapper.updateStatusIfCurrent(
+                        taskId,
+                        workspaceId,
+                        currentStatus,
+                        TaskStatus.WAITING_APPROVAL.name(),
+                        30,
+                        "wait_for_approval");
             }
             return true;
         }

@@ -46,6 +46,7 @@ class ResearchState(TypedDict, total=False):
 
 
     phase: str
+    require_plan_approval: bool
     plan_revision: int
     revision_instruction: str | None
     plan_hash: str | None

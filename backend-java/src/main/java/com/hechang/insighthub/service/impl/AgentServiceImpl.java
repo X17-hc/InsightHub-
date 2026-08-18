@@ -1,5 +1,6 @@
 package com.hechang.insighthub.service.impl;
 
+import jakarta.annotation.Resource;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
@@ -13,7 +14,6 @@ import com.hechang.insighthub.model.dto.agent.AgentResponse;
 import com.hechang.insighthub.model.dto.agent.CreateAgentRequest;
 import com.hechang.insighthub.model.dto.agent.UpdateAgentRequest;
 import com.hechang.insighthub.model.entity.AgentDefinition;
-import com.hechang.insighthub.security.SecurityUtils;
 import com.hechang.insighthub.service.AgentService;
 import com.hechang.insighthub.service.WorkspaceAccessService;
 import com.mybatisflex.core.query.QueryWrapper;
@@ -31,16 +31,12 @@ public class AgentServiceImpl extends ServiceImpl<AgentDefinitionMapper, AgentDe
 
     private static final Set<String> ALLOWED_RUNTIMES = Set.of("PYTHON", "JAVA");
 
-    private final WorkspaceAccessService accessService;
-
-    public AgentServiceImpl(WorkspaceAccessService accessService) {
-        this.accessService = accessService;
-    }
+    @Resource
+    private WorkspaceAccessService accessService;
 
     @Override
     public List<AgentResponse> list(String workspaceId) {
-        String userId = SecurityUtils.requireUserId();
-        accessService.requireMember(workspaceId, userId);
+        accessService.requireCurrentMember(workspaceId);
         return list(QueryWrapper.create()
                 .eq(AgentDefinition::getWorkspaceId, workspaceId)
                 .orderBy(AgentDefinition::getAgentType, true)
@@ -51,8 +47,7 @@ public class AgentServiceImpl extends ServiceImpl<AgentDefinitionMapper, AgentDe
     @Override
     @Transactional
     public AgentResponse create(String workspaceId, CreateAgentRequest request) {
-        String userId = SecurityUtils.requireUserId();
-        accessService.requireAdmin(workspaceId, userId);
+        accessService.requireCurrentAdmin(workspaceId);
         String type = request.getAgentType().trim().toUpperCase();
         if (!ALLOWED_TYPES.contains(type)) {
             throw BusinessException.badRequest("INVALID_AGENT_TYPE", "unsupported agentType");
@@ -81,8 +76,7 @@ public class AgentServiceImpl extends ServiceImpl<AgentDefinitionMapper, AgentDe
     @Override
     @Transactional
     public AgentResponse update(String workspaceId, String agentId, UpdateAgentRequest request) {
-        String userId = SecurityUtils.requireUserId();
-        accessService.requireAdmin(workspaceId, userId);
+        accessService.requireCurrentAdmin(workspaceId);
         if (findAgent(workspaceId, agentId) == null) {
             throw BusinessException.notFound("agent not found");
         }
@@ -101,8 +95,7 @@ public class AgentServiceImpl extends ServiceImpl<AgentDefinitionMapper, AgentDe
     @Override
     @Transactional
     public AgentResponse enable(String workspaceId, String agentId, boolean enabled) {
-        String userId = SecurityUtils.requireUserId();
-        accessService.requireAdmin(workspaceId, userId);
+        accessService.requireCurrentAdmin(workspaceId);
         if (findAgent(workspaceId, agentId) == null) {
             throw BusinessException.notFound("agent not found");
         }

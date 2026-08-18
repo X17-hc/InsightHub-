@@ -17,10 +17,13 @@ import com.hechang.insighthub.model.entity.SysUser;
 import com.hechang.insighthub.model.entity.Workspace;
 import com.hechang.insighthub.model.entity.WorkspaceMember;
 
+import lombok.RequiredArgsConstructor;
+
 /**
  * 启动 seed：双用户 / 双工作空间 / 默认 Agent（可通过 insighthub.demo.seed-enabled 关闭）。
  */
 @Component
+@RequiredArgsConstructor
 public class DemoDataSeed implements ApplicationRunner {
 
     private static final Logger log = LoggerFactory.getLogger(DemoDataSeed.class);
@@ -32,21 +35,6 @@ public class DemoDataSeed implements ApplicationRunner {
     private final WorkspaceMapper workspaceMapper;
     private final WorkspaceMemberMapper workspaceMemberMapper;
     private final AgentDefinitionMapper agentDefinitionMapper;
-
-    public DemoDataSeed(
-            DemoProperties demoProperties,
-            PasswordEncoder passwordEncoder,
-            SysUserMapper sysUserMapper,
-            WorkspaceMapper workspaceMapper,
-            WorkspaceMemberMapper workspaceMemberMapper,
-            AgentDefinitionMapper agentDefinitionMapper) {
-        this.demoProperties = demoProperties;
-        this.passwordEncoder = passwordEncoder;
-        this.sysUserMapper = sysUserMapper;
-        this.workspaceMapper = workspaceMapper;
-        this.workspaceMemberMapper = workspaceMemberMapper;
-        this.agentDefinitionMapper = agentDefinitionMapper;
-    }
 
     @Override
     public void run(ApplicationArguments args) {

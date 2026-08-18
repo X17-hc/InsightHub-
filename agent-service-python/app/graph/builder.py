@@ -30,6 +30,8 @@ _compiled = None
 def wait_for_approval(state: ResearchState) -> dict[str, Any]:
     """PLAN 阶段暂停；第二天使用 Command(resume=...) 从同一节点恢复。"""
 
+    if not state.get("require_plan_approval"):
+        return {"phase": "EXECUTE", "approved": True, "status": "RUNNING"}
     if state.get("phase") == "EXECUTE" and state.get("approved"):
         return {"status": "RUNNING"}
     decision = interrupt({
@@ -138,12 +140,18 @@ def build_graph(checkpointer: BaseCheckpointSaver[Any] | None = None):
 
     # 添加边
     graph.add_edge(START, "create_plan")
-    graph.add_edge("create_plan", "wait_for_approval")
-    graph.add_edge("wait_for_approval", "dispatch_tasks")
-    graph.add_edge("dispatch_tasks", "knowledge_research")
-    graph.add_edge("knowledge_research", "web_research")
-    graph.add_edge("web_research", "write_report")
-    graph.add_edge("write_report", "finalize")
+    graph.add_conditional_edges(
+        "create_plan", _route_after_node, {"stop": END, "continue": "wait_for_approval"})
+    graph.add_conditional_edges(
+        "wait_for_approval", _route_after_node, {"stop": END, "continue": "dispatch_tasks"})
+    graph.add_conditional_edges(
+        "dispatch_tasks", _route_after_node, {"stop": END, "continue": "knowledge_research"})
+    graph.add_conditional_edges(
+        "knowledge_research", _route_after_node, {"stop": END, "continue": "web_research"})
+    graph.add_conditional_edges(
+        "web_research", _route_after_node, {"stop": END, "continue": "write_report"})
+    graph.add_conditional_edges(
+        "write_report", _route_after_node, {"stop": END, "continue": "finalize"})
     graph.add_edge("finalize", END)
 
     return graph.compile(checkpointer=checkpointer or get_checkpointer())

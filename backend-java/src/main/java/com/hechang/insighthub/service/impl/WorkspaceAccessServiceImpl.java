@@ -1,5 +1,6 @@
 package com.hechang.insighthub.service.impl;
 
+import jakarta.annotation.Resource;
 import org.springframework.stereotype.Service;
 
 import com.hechang.insighthub.exception.BusinessException;
@@ -17,13 +18,10 @@ import com.mybatisflex.core.query.QueryWrapper;
 @Service
 public class WorkspaceAccessServiceImpl implements WorkspaceAccessService {
 
-    private final WorkspaceMapper workspaceMapper;
-    private final WorkspaceMemberMapper memberMapper;
-
-    public WorkspaceAccessServiceImpl(WorkspaceMapper workspaceMapper, WorkspaceMemberMapper memberMapper) {
-        this.workspaceMapper = workspaceMapper;
-        this.memberMapper = memberMapper;
-    }
+    @Resource
+    private WorkspaceMapper workspaceMapper;
+    @Resource
+    private WorkspaceMemberMapper memberMapper;
 
     @Override
     public WorkspaceRole requireMember(String workspaceId, String userId) {

@@ -2,16 +2,10 @@ package com.hechang.insighthub.service;
 
 import java.util.List;
 
+import com.hechang.insighthub.model.dto.task.*;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import com.hechang.insighthub.model.dto.knowledge.CitationResponse;
-import com.hechang.insighthub.model.dto.task.AgentTaskResponseDto;
-import com.hechang.insighthub.model.dto.task.CreateResearchTaskRequest;
-import com.hechang.insighthub.model.dto.task.CreateTaskAcceptedResponse;
-import com.hechang.insighthub.model.dto.task.ReportResponse;
-import com.hechang.insighthub.model.dto.task.TaskControlResponse;
-import com.hechang.insighthub.model.dto.task.TaskEventResponse;
-import com.hechang.insighthub.model.dto.task.TaskSummaryResponse;
 import com.hechang.insighthub.model.entity.ResearchTask;
 import com.mybatisflex.core.service.IService;
 
@@ -59,4 +53,8 @@ public interface ResearchTaskService extends IService<ResearchTask> {
 
     /** 失败重试 */
     CreateTaskAcceptedResponse retry(String workspaceId, String taskId);
+
+    PlanRevisionResponse getCurrentPlan(String workspaceId, String taskId);
+
+    List<PlanRevisionResponse> listPlanHistory(String workspaceId, String taskId);
 }

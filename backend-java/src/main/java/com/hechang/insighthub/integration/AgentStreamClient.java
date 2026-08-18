@@ -21,6 +21,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.hechang.insighthub.config.AgentProperties;
 
+import lombok.RequiredArgsConstructor;
+
 import reactor.core.publisher.Flux;
 import reactor.netty.http.client.HttpClient;
 
@@ -28,6 +30,7 @@ import reactor.netty.http.client.HttpClient;
  * 消费 Python Agent NDJSON 流。
  */
 @Component
+@RequiredArgsConstructor
 public class AgentStreamClient {
 
     private static final Logger log = LoggerFactory.getLogger(AgentStreamClient.class);
@@ -38,15 +41,6 @@ public class AgentStreamClient {
     private final WebClient agentWebClient;
     private final ObjectMapper objectMapper;
     private final AgentProperties agentProperties;
-
-    public AgentStreamClient(
-            WebClient agentWebClient,
-            ObjectMapper objectMapper,
-            AgentProperties agentProperties) {
-        this.agentWebClient = agentWebClient;
-        this.objectMapper = objectMapper;
-        this.agentProperties = agentProperties;
-    }
 
     /**
      * 启动流式任务并逐行回调 JSON 节点。
@@ -215,7 +209,7 @@ public class AgentStreamClient {
         Map<String, Object> config = new HashMap<>();
         config.put("maxSteps", 20);
         config.put("maxParallelism", 3);
-        config.put("requirePlanApproval", false);
+        config.put("requirePlanApproval", true);
         config.put("enableWebSearch", true);
         config.put("timeoutSeconds", timeoutSec);
         if (nextEventId != null && nextEventId > 1) {
@@ -227,6 +221,8 @@ public class AgentStreamClient {
         body.put("workspaceId", workspaceId);
         body.put("userId", userId);
         body.put("query", query);
+        body.put("phase", "PLAN");
+        body.put("planRevision", 1);
         body.put("knowledgeBaseIds", knowledgeBaseIds == null ? List.of() : knowledgeBaseIds);
         body.put("config", config);
         return body;

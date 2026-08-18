@@ -2,7 +2,6 @@ package com.hechang.insighthub.controller;
 
 import java.util.List;
 
-import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -21,21 +20,19 @@ import com.hechang.insighthub.service.AgentService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
+import lombok.RequiredArgsConstructor;
 
 /**
  * 工作空间 Agent 配置 API。
  */
 @RestController
 @RequestMapping("/api/v1/workspaces/{workspaceId}/agents")
-@Validated
 @Tag(name = "Agent")
+@RequiredArgsConstructor
 public class AgentController {
 
     private final AgentService agentService;
 
-    public AgentController(AgentService agentService) {
-        this.agentService = agentService;
-    }
 
     @GetMapping
     @Operation(summary = "Agent 列表")

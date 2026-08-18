@@ -19,6 +19,8 @@ import org.springframework.security.web.context.SecurityContextRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.hechang.insighthub.config.DocsProperties;
 
+import lombok.RequiredArgsConstructor;
+
 /**
  * Spring Security：JWT 无状态会话。
  *
@@ -26,6 +28,7 @@ import com.hechang.insighthub.config.DocsProperties;
  */
 @Configuration
 @EnableWebSecurity
+@RequiredArgsConstructor
 public class SecurityConfig {
 
     private static final String[] DOC_PATHS = {
@@ -40,12 +43,6 @@ public class SecurityConfig {
     private final JwtAuthFilter jwtAuthFilter;
     private final ObjectMapper objectMapper;
     private final DocsProperties docsProperties;
-
-    public SecurityConfig(JwtAuthFilter jwtAuthFilter, ObjectMapper objectMapper, DocsProperties docsProperties) {
-        this.jwtAuthFilter = jwtAuthFilter;
-        this.objectMapper = objectMapper;
-        this.docsProperties = docsProperties;
-    }
 
     @Bean
     public SecurityFilterChain securityFilterChain(

@@ -4,7 +4,6 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.Collections;
 
-import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.MediaType;
@@ -24,14 +23,6 @@ import reactor.netty.http.client.HttpClient;
  * WebClient 与配置属性装配。
  */
 @Configuration
-@EnableConfigurationProperties({
-        AgentProperties.class,
-        DemoProperties.class,
-        JwtProperties.class,
-        DocsProperties.class,
-        TaskProperties.class,
-        UploadProperties.class
-})
 public class AppConfig {
 
     /**
