@@ -233,6 +233,8 @@ public class AgentStreamClient {
         config.put("maxParallelism", 3);
         config.put("requirePlanApproval", true);
         config.put("enableWebSearch", true);
+        config.put("maxCriticRounds", 2);
+        config.put("enableDataAnalysis", false);
         config.put("timeoutSeconds", timeoutSec);
         if (nextEventId != null && nextEventId > 1) {
             config.put("nextEventId", nextEventId);

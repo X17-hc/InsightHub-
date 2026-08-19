@@ -22,3 +22,5 @@ def test_task_config_defaults():
     cfg = TaskConfig()
     assert cfg.max_steps == 20
     assert cfg.enable_web_search is True
+    assert cfg.max_critic_rounds == 2
+    assert cfg.enable_data_analysis is False

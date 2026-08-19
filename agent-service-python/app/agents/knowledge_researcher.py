@@ -37,13 +37,14 @@ def knowledge_research(state: ResearchState) -> dict[str, Any]:
         )
     )
 
+    raw_pending = list(state.get("pending_tasks") or [])
     pending = [
         t
-        for t in (state.get("pending_tasks") or [])
+        for t in raw_pending
         if (t.get("type") or "").lower() in {"knowledge_research", "kb_research", "knowledge"}
     ]
-    # 若未单独 pending，但有 KB，则用用户问题做一次检索
-    if not pending and kb_ids:
+    # 仅当完全没有 pending 且绑定了 KB 时兜底检索；补充轮次带 web-only 时不自动插入
+    if not pending and kb_ids and not raw_pending:
         pending = [
             {
                 "id": "kb-1",
@@ -56,7 +57,7 @@ def knowledge_research(state: ResearchState) -> dict[str, Any]:
     completed = list(state.get("completed_tasks") or [])
     remaining = [
         t
-        for t in (state.get("pending_tasks") or [])
+        for t in raw_pending
         if (t.get("type") or "").lower()
         not in {"knowledge_research", "kb_research", "knowledge"}
     ]

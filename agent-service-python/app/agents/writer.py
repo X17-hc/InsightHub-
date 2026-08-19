@@ -1,23 +1,25 @@
-"""报告生成节点：仅使用证据组装 Markdown（非独立 Agent 角色）。"""
+"""报告生成节点：仅用 verified 证据支撑结论；未验证来源仅写入限制节。"""
 
 from __future__ import annotations
 
 from typing import Any
 
-from langgraph.config import get_stream_writer
 from langchain_core.messages import HumanMessage, SystemMessage
+from langgraph.config import get_stream_writer
 
 from app.core.config import get_settings
 from app.core.llm import get_chat_model
-from app.graph.events import make_event
 from app.graph.deadline import remaining_seconds
+from app.graph.events import make_event
 from app.graph.limits import claim_step
 from app.graph.state import ResearchState
 
 _WRITER_SYSTEM = """你是技术研究报告撰写助手。
-只根据提供的证据写 Markdown 报告，不要编造不存在的来源编号。
+只根据 verified=true 的证据写结论，不要编造不存在的来源编号。
+未验证证据只能出现在「限制 / 未验证来源」中，不得作为结论依据。
+若提供了 critique.limitations，必须写入限制章节。
 结构必须包含：标题、摘要、研究发现、对比/要点、建议、限制、参考来源。
-参考来源使用 [n] 形式，并与证据列表一一对应。
+参考来源使用 [n] 形式，并与已验证证据列表一一对应。
 """
 
 
@@ -27,6 +29,20 @@ def _emit_custom_event(event: dict[str, Any]) -> None:
         get_stream_writer()(event)
     except Exception:  # noqa: BLE001 - 同步 invoke / 单测伪图可能没有 custom writer
         return
+
+
+def _split_evidence(evidence: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """拆分已验证 / 未验证证据。"""
+    verified = [ev for ev in evidence if ev.get("verified")]
+    unverified = [ev for ev in evidence if not ev.get("verified")]
+    return verified, unverified
+
+
+def _critique_limitations(state: ResearchState) -> list[str]:
+    """从 critique 提取限制说明。"""
+    critique = state.get("critique") or {}
+    raw = critique.get("limitations") or []
+    return [str(item) for item in raw if item]
 
 
 def _report_delta_events(
@@ -65,29 +81,122 @@ def _report_delta_events(
 
 
 def _render_fallback(state: ResearchState) -> str:
-    """无 LLM 时的模板报告。"""
+    """无 LLM 时的模板报告：结论仅引用 verified 证据。"""
     plan = state.get("plan") or {}
     title = plan.get("title") or "研究报告"
     query = state.get("clarified_query") or state.get("user_query") or ""
-    evidence = state.get("evidence") or []
+    all_evidence = list(state.get("evidence") or [])
+    verified, unverified = _split_evidence(all_evidence)
+    limitations = _critique_limitations(state)
+    critique = state.get("critique") or {}
+    verdict = critique.get("verdict")
+
     lines = [
         f"# {title}",
         "",
         "## 摘要",
         f"本报告围绕「{query}」整理多 Agent 协作研究得到的要点与来源。",
-        "",
-        "## 研究发现",
     ]
-    for i, ev in enumerate(evidence, start=1):
-        lines.append(f"{i}. {ev.get('quotedText', '')} [{i}]")
-    lines.extend(["", "## 建议", "- 结合自身技术栈与可观测性要求进一步验证。", "", "## 限制", "- 第 1 周演示可能包含 SYNTHETIC 证据，上线前需替换为真实检索。", "", "## 参考来源"])
-    for i, ev in enumerate(evidence, start=1):
-        lines.append(f"[{i}] {ev.get('sourceTitle')} - {ev.get('sourceUri')} ({ev.get('sourceType')})")
+    if verdict == "FAIL":
+        lines.append("评审未完全通过，下列结论带有明确限制。")
+    lines.extend(["", "## 研究发现"])
+    if verified:
+        for i, ev in enumerate(verified, start=1):
+            lines.append(f"{i}. {ev.get('quotedText', '')} [{i}]")
+    else:
+        lines.append("- （无已验证证据，不输出结论性发现）")
+
+    lines.extend(["", "## 建议", "- 结合自身技术栈与可观测性要求进一步验证。", "", "## 限制"])
+    if limitations:
+        for item in limitations:
+            lines.append(f"- {item}")
+    else:
+        lines.append("- 自动研究可能遗漏最新变更，关键决策请复核原始来源。")
+    if unverified:
+        lines.append("- 以下来源未通过核验，不得作为结论依据：")
+        for ev in unverified:
+            lines.append(
+                f"  - {ev.get('sourceTitle')} - {ev.get('sourceUri')} ({ev.get('sourceType')})"
+            )
+
+    lines.extend(["", "## 参考来源"])
+    if verified:
+        for i, ev in enumerate(verified, start=1):
+            lines.append(
+                f"[{i}] {ev.get('sourceTitle')} - {ev.get('sourceUri')} ({ev.get('sourceType')})"
+            )
+    else:
+        lines.append("- （无已验证参考来源）")
     return "\n".join(lines)
 
 
+def _build_citations(evidence: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """
+    构建引用列表：已验证证据优先编号；未验证保留但 verified=false。
+
+    Writer 结论编号与已验证列表对齐；未验证追加在后供审计。
+    """
+    verified, unverified = _split_evidence(evidence)
+    citations: list[dict[str, Any]] = []
+    for i, ev in enumerate(verified + unverified, start=1):
+        citations.append(
+            {
+                "citationNo": i,
+                "sourceTitle": ev.get("sourceTitle"),
+                "sourceUri": ev.get("sourceUri"),
+                "sourceType": ev.get("sourceType") or "WEB",
+                "documentId": ev.get("documentId"),
+                "chunkId": ev.get("chunkId"),
+                "quotedText": ev.get("quotedText"),
+                "verified": bool(ev.get("verified")),
+            }
+        )
+    return citations
+
+
+def _append_guard_sections(report: str, state: ResearchState) -> str:
+    """确保限制 / 未验证来源节存在（LLM 漏写时补齐）。"""
+    limitations = _critique_limitations(state)
+    _, unverified = _split_evidence(list(state.get("evidence") or []))
+    out = report.rstrip()
+    if limitations and "## 限制" not in out:
+        out += "\n\n## 限制\n" + "\n".join(f"- {item}" for item in limitations)
+    if unverified and "未通过核验" not in out and "未验证来源" not in out:
+        if "## 限制" not in out:
+            out += "\n\n## 限制"
+        out += "\n- 以下来源未通过核验，不得作为结论依据："
+        for ev in unverified:
+            out += (
+                f"\n  - {ev.get('sourceTitle')} - {ev.get('sourceUri')} "
+                f"({ev.get('sourceType')})"
+            )
+    return out
+
+
+def _sanitize_llm_report(report: str, state: ResearchState) -> str:
+    """
+    后置校验 LLM 报告：无 verified 或结论区泄漏未验证摘录时回退模板。
+
+    Returns:
+        合规 Markdown 报告。
+    """
+    verified, unverified = _split_evidence(list(state.get("evidence") or []))
+    if not report or not report.lstrip().startswith("#"):
+        return _render_fallback(state)
+    if not verified:
+        return _render_fallback(state)
+
+    # 仅检查「限制」之前的正文，避免限制节中的合法列举误判
+    body = report.split("## 限制")[0] if "## 限制" in report else report
+    for ev in unverified:
+        quote = (ev.get("quotedText") or "").strip()
+        if len(quote) >= 24 and quote in body:
+            return _render_fallback(state)
+    return _append_guard_sections(report, state)
+
+
 def write_report(state: ResearchState) -> dict[str, Any]:
-    """基于 evidence 生成 Markdown 报告。"""
+    """基于 verified 证据生成 Markdown 报告。"""
     settings = get_settings()
     step, limit_failure = claim_step(state, "write_report")
     if limit_failure is not None:
@@ -109,7 +218,10 @@ def write_report(state: ResearchState) -> dict[str, Any]:
     )
     _emit_custom_event(delta[-1])
 
-    evidence = state.get("evidence") or []
+    all_evidence = list(state.get("evidence") or [])
+    verified, unverified = _split_evidence(all_evidence)
+    limitations = _critique_limitations(state)
+
     if settings.agent_mock_llm or not settings.deepseek_api_key:
         report = _render_fallback(state)
         delta.extend(
@@ -122,10 +234,19 @@ def write_report(state: ResearchState) -> dict[str, Any]:
         )
     else:
         model = get_chat_model(temperature=0.3, timeout_seconds=remaining_seconds(state, 60))
+        # 结论上下文只传 verified；未验证仅作限制提示，降低模型误用概率
         payload = {
             "query": state.get("clarified_query") or state.get("user_query"),
             "plan": state.get("plan"),
-            "evidence": evidence,
+            "critique": {
+                "verdict": (state.get("critique") or {}).get("verdict"),
+                "limitations": limitations,
+            },
+            "verifiedEvidence": verified,
+            "unverifiedSourceTitles": [
+                ev.get("sourceTitle") for ev in unverified if ev.get("sourceTitle")
+            ],
+            "limitations": limitations,
         }
         messages = [
             SystemMessage(content=_WRITER_SYSTEM),
@@ -139,7 +260,10 @@ def write_report(state: ResearchState) -> dict[str, Any]:
             for piece in model.stream(messages):
                 content = getattr(piece, "content", "")
                 if isinstance(content, list):
-                    text = "".join(str(item.get("text", item)) if isinstance(item, dict) else str(item) for item in content)
+                    text = "".join(
+                        str(item.get("text", item)) if isinstance(item, dict) else str(item)
+                        for item in content
+                    )
                 else:
                     text = str(content or "")
                 if not text:
@@ -166,14 +290,6 @@ def write_report(state: ResearchState) -> dict[str, Any]:
         if stream_failed or not chunks:
             resp = model.invoke(messages)
             report = str(resp.content).strip()
-            delta.extend(
-                _report_delta_events(
-                    report=report,
-                    events=events + delta,
-                    task_id=task_id,
-                    run_id=run_id,
-                )
-            )
         else:
             if pending:
                 chunk_index += 1
@@ -188,17 +304,17 @@ def write_report(state: ResearchState) -> dict[str, Any]:
                 delta.append(event)
                 _emit_custom_event(event)
             report = "".join(chunks).strip()
-        if not report.startswith("#"):
-            report = _render_fallback(state)
-            delta.extend(
-                _report_delta_events(
-                    report=report,
-                    events=events + delta,
-                    task_id=task_id,
-                    run_id=run_id,
-                )
+        report = _sanitize_llm_report(report, state)
+        delta.extend(
+            _report_delta_events(
+                report=report,
+                events=events + delta,
+                task_id=task_id,
+                run_id=run_id,
             )
+        )
 
+    citations = _build_citations(all_evidence)
     delta.append(
         make_event(
             events=events + delta,
@@ -206,26 +322,14 @@ def write_report(state: ResearchState) -> dict[str, Any]:
             run_id=run_id,
             event_type="NODE_COMPLETED",
             node="write_report",
-            data={"chars": len(report), "citationCount": len(evidence)},
+            data={
+                "chars": len(report),
+                "citationCount": len(citations),
+                "verifiedCitationCount": len(verified),
+            },
         )
     )
     _emit_custom_event(delta[-1])
-
-    # 结构化引用，供 Java 落库 citation 表
-    citations: list[dict[str, Any]] = []
-    for i, ev in enumerate(evidence, start=1):
-        citations.append(
-            {
-                "citationNo": i,
-                "sourceTitle": ev.get("sourceTitle"),
-                "sourceUri": ev.get("sourceUri"),
-                "sourceType": ev.get("sourceType") or "WEB",
-                "documentId": ev.get("documentId"),
-                "chunkId": ev.get("chunkId"),
-                "quotedText": ev.get("quotedText"),
-                "verified": bool(ev.get("verified")),
-            }
-        )
 
     return {
         "report": report,

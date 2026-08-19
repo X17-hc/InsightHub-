@@ -302,6 +302,27 @@ public class TaskExecutionServiceImpl implements TaskExecutionService {
                             TaskStatus.RUNNING.name(), null, node);
                 }
             }
+            case "CRITIC_STARTED" -> {
+                if (!paused && TaskStatus.RUNNING.matches(current)) {
+                    researchTaskMapper.updateStatusIfCurrent(
+                            taskId, workspaceId, TaskStatus.RUNNING.name(),
+                            TaskStatus.RUNNING.name(), 55, "critic_review");
+                }
+            }
+            case "CRITIQUE_COMPLETED" -> {
+                if (!paused && TaskStatus.RUNNING.matches(current)) {
+                    researchTaskMapper.updateStatusIfCurrent(
+                            taskId, workspaceId, TaskStatus.RUNNING.name(),
+                            TaskStatus.RUNNING.name(), 60, "critic_review");
+                }
+            }
+            case "SUPPLEMENT_RESEARCH_REQUESTED" -> {
+                if (!paused && TaskStatus.RUNNING.matches(current)) {
+                    researchTaskMapper.updateStatusIfCurrent(
+                            taskId, workspaceId, TaskStatus.RUNNING.name(),
+                            TaskStatus.RUNNING.name(), 65, "supplement_research");
+                }
+            }
             case "TASK_PAUSED" -> {
                 if (TaskStatus.RUNNING.matches(current) || TaskStatus.PAUSING.matches(current)) {
                     stateMachine.transition(TaskStatus.valueOf(current), TaskStatus.PAUSED);

@@ -1,4 +1,4 @@
-"""构建研究图：Planner → Supervisor → Knowledge → Web → write_report → finalize。"""
+"""构建研究图：Planner → 审批 → 研究 → 证据核验 → Critic →（可选补充）→ Writer。"""
 
 from __future__ import annotations
 
@@ -9,7 +9,10 @@ from urllib.parse import quote
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
+from langgraph.types import interrupt
 
+from app.agents.critic import critic_review, route_after_critic, supplement_research
+from app.agents.evidence_verifier import merge_evidence
 from app.agents.knowledge_researcher import knowledge_research
 from app.agents.planner import create_plan
 from app.agents.researcher import web_research
@@ -18,10 +21,7 @@ from app.agents.writer import finalize, write_report
 from app.core.config import get_settings
 from app.graph.state import ResearchState
 
-from langgraph.types import interrupt
-
-
-# Checkpoint 单例，thread_id=taskId
+# Checkpoint 单例，thread_id=taskId:runId
 _checkpointer: BaseCheckpointSaver[Any] | None = None
 _checkpoint_pool: Any | None = None
 _compiled = None
@@ -130,16 +130,17 @@ def build_graph(checkpointer: BaseCheckpointSaver[Any] | None = None):
         checkpointer: 可选自定义 checkpointer；默认使用配置的持久化后端。
     """
     graph = StateGraph(ResearchState)
-    # 添加节点
     graph.add_node("create_plan", create_plan)
     graph.add_node("wait_for_approval", wait_for_approval)
     graph.add_node("dispatch_tasks", dispatch_tasks)
     graph.add_node("knowledge_research", knowledge_research)
     graph.add_node("web_research", web_research)
+    graph.add_node("merge_evidence", merge_evidence)
+    graph.add_node("critic_review", critic_review)
+    graph.add_node("supplement_research", supplement_research)
     graph.add_node("write_report", write_report)
     graph.add_node("finalize", finalize)
 
-    # 添加边
     graph.add_edge(START, "create_plan")
     graph.add_conditional_edges(
         "create_plan", _route_after_node, {"stop": END, "continue": "wait_for_approval"})
@@ -150,7 +151,19 @@ def build_graph(checkpointer: BaseCheckpointSaver[Any] | None = None):
     graph.add_conditional_edges(
         "knowledge_research", _route_after_node, {"stop": END, "continue": "web_research"})
     graph.add_conditional_edges(
-        "web_research", _route_after_node, {"stop": END, "continue": "write_report"})
+        "web_research", _route_after_node, {"stop": END, "continue": "merge_evidence"})
+    graph.add_conditional_edges(
+        "merge_evidence", _route_after_node, {"stop": END, "continue": "critic_review"})
+    graph.add_conditional_edges(
+        "critic_review",
+        route_after_critic,
+        {"stop": END, "supplement": "supplement_research", "write": "write_report"},
+    )
+    graph.add_conditional_edges(
+        "supplement_research",
+        _route_after_node,
+        {"stop": END, "continue": "knowledge_research"},
+    )
     graph.add_conditional_edges(
         "write_report", _route_after_node, {"stop": END, "continue": "finalize"})
     graph.add_edge("finalize", END)

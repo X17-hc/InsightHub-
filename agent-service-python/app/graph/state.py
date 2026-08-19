@@ -36,6 +36,10 @@ class ResearchState(TypedDict, total=False):
     step_count: int
     retry_count: int
     max_steps: int
+    # 已完成的 Critic 轮次（每次 critic_review 结束后 +1）
+    critic_round: int
+    max_critic_rounds: int
+    verified_evidence_ids: list[str]
     deadline_at: float
     enable_web_search: bool
     knowledge_base_ids: list[str]
@@ -43,7 +47,6 @@ class ResearchState(TypedDict, total=False):
     errors: list[dict[str, Any]]
     status: str
     events: Annotated[list[dict[str, Any]], _merge_events]
-
 
     phase: str
     require_plan_approval: bool

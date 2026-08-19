@@ -105,9 +105,33 @@ def web_research(state: ResearchState) -> dict[str, Any]:
         )
     )
 
-    pending = list(state.get("pending_tasks") or [])
+    _WEB_TYPES = {"web_research", "web-research", "research"}
+    raw_pending = list(state.get("pending_tasks") or [])
+    pending = [t for t in raw_pending if (t.get("type") or "").lower() in _WEB_TYPES]
+    # 非 web 任务原样保留（正常链路 knowledge 已剥离；此处防御）
+    remaining = [t for t in raw_pending if (t.get("type") or "").lower() not in _WEB_TYPES]
     all_evidence = list(state.get("evidence") or [])
     completed = list(state.get("completed_tasks") or [])
+
+    # 无 web pending 时透传，不清空已有证据（补充轮次可能仅含 KB）
+    if not pending:
+        delta.append(
+            make_event(
+                events=events + delta,
+                task_id=task_id,
+                run_id=run_id,
+                event_type="NODE_COMPLETED",
+                node="web_research",
+                data={"agent": "Researcher", "sourceCount": len(all_evidence), "skipped": True},
+            )
+        )
+        return {
+            "evidence": all_evidence,
+            "pending_tasks": remaining,
+            "completed_tasks": completed,
+            "step_count": step,
+            "events": delta,
+        }
 
     for sub in pending:
         description = sub.get("description") or state.get("clarified_query") or state["user_query"]
@@ -203,7 +227,7 @@ def web_research(state: ResearchState) -> dict[str, Any]:
 
     return {
         "evidence": all_evidence,
-        "pending_tasks": [],
+        "pending_tasks": remaining,
         "completed_tasks": completed,
         "step_count": step,
         "events": delta,

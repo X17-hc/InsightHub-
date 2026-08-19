@@ -25,8 +25,12 @@ X-Idempotency-Key: <taskId>-attempt-<n>
 | knowledgeBaseIds | string[] | 否 | 绑定的知识库 ID 列表（第 4 周生效；Agent 检索 PGVector） |
 | config.maxSteps | int | 否 | 默认 20 |
 | config.maxParallelism | int | 否 | 默认 3 |
-| config.requirePlanApproval | bool | 否 | 第 1 周固定按 false 处理 |
+| config.requirePlanApproval | bool | 否 | 为 true 时 PLAN 阶段停在审批 |
 | config.enableWebSearch | bool | 否 | 默认 true |
+| config.maxCriticRounds | int | 否 | 默认 2（1~2）；允许一轮 SUPPLEMENT 后再评 |
+| config.enableDataAnalysis | bool | 否 | 默认 false（Day4 沙箱启用） |
+| config.timeoutSeconds | int | 否 | 默认 300 |
+| config.nextEventId | int | 否 | Java retry 续号 |
 
 ### 成功响应
 
@@ -81,22 +85,26 @@ X-Idempotency-Key: <taskId>-attempt-<n>
 
 ### 事件类型（全集声明）
 
-| type | 第 1 周是否产出 |
+| type | 是否产出 |
 | --- | --- |
 | TASK_STARTED | 是 |
 | PLAN_CREATED | 是 |
-| APPROVAL_REQUIRED | 否（预留） |
+| APPROVAL_REQUIRED | 是（HITL） |
+| PLAN_REVISED | 是（修订流程） |
 | NODE_STARTED | 是 |
 | TOOL_CALLED | 可选 |
 | TOOL_COMPLETED | 可选 |
 | NODE_COMPLETED | 是 |
 | NODE_RETRYING | 否（预留） |
-| REPORT_DELTA | 是（第 3 周流式） |
-| TASK_PAUSED | 否（预留） |
+| CRITIC_STARTED | 是（Day3） |
+| CRITIQUE_COMPLETED | 是（Day3；data: verdict/criticRound/gapCount/limitations） |
+| SUPPLEMENT_RESEARCH_REQUESTED | 是（Day3；最多一轮） |
+| REPORT_DELTA | 是 |
+| TASK_PAUSED | 是 |
 | TASK_COMPLETED | 是 |
 | TASK_FAILED | 是 |
 
-`eventId` 在单次任务内从 1 单调递增，供后续 SSE 断线续传。
+`eventId` 在单次任务内从 1 单调递增，供后续 SSE 断线续传。事件 `data` 为结构化对象，不传递模型原始全文或密钥。
 
 ---
 

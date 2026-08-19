@@ -48,6 +48,8 @@ public class AgentServiceClient {
         config.put("maxParallelism", 3);
         config.put("requirePlanApproval", false);
         config.put("enableWebSearch", true);
+        config.put("maxCriticRounds", 2);
+        config.put("enableDataAnalysis", false);
 
         Map<String, Object> body = new HashMap<>();
         body.put("taskId", taskId);

@@ -23,6 +23,10 @@ class TaskConfig(StrictModel):
     max_parallelism: int = Field(default=3, alias="maxParallelism")
     require_plan_approval: bool = Field(default=False, alias="requirePlanApproval")
     enable_web_search: bool = Field(default=True, alias="enableWebSearch")
+    # Critic 最多轮次：1=仅评审不补充；2=允许一轮 SUPPLEMENT 后再评
+    max_critic_rounds: int = Field(default=2, ge=1, le=2, alias="maxCriticRounds")
+    # Day4 数据分析开关；Day3 固定透传 false
+    enable_data_analysis: bool = Field(default=False, alias="enableDataAnalysis")
     # 流式执行超时（秒），超时 yield TASK_FAILED(TIMEOUT)
     timeout_seconds: int = Field(default=300, alias="timeoutSeconds")
     # 下一个可用 eventId（Java 传 DB max+1）；用于 retry 续号
@@ -47,6 +51,48 @@ class Plan(StrictModel):
         ids = [item.id for item in value]
         if len(ids) != len(set(ids)):
             raise ValueError("plan task ids must be unique")
+        return value
+
+
+class Evidence(StrictModel):
+    """研究证据快照（不可变契约）。"""
+
+    id: str = Field(min_length=1, max_length=128)
+    source_title: str = Field(alias="sourceTitle", min_length=1, max_length=512)
+    source_uri: str = Field(default="", alias="sourceUri", max_length=2048)
+    quoted_text: str = Field(default="", alias="quotedText", max_length=8000)
+    source_type: str = Field(default="WEB", alias="sourceType", max_length=32)
+    document_id: str | None = Field(default=None, alias="documentId")
+    chunk_id: str | None = Field(default=None, alias="chunkId")
+    verified: bool = False
+
+
+class SupplementTask(StrictModel):
+    """Critic 请求的补充研究子任务（最多 2 个）。"""
+
+    id: str = Field(min_length=1, max_length=64)
+    type: Literal["web_research", "knowledge_research"]
+    description: str = Field(min_length=1, max_length=2000)
+
+
+class CritiqueResult(StrictModel):
+    """Critic 评审结果：PASS / SUPPLEMENT / FAIL。"""
+
+    verdict: Literal["PASS", "SUPPLEMENT", "FAIL"]
+    summary: str = Field(default="", max_length=4000)
+    gaps: tuple[str, ...] = Field(default=())
+    limitations: tuple[str, ...] = Field(default=())
+    supplement_tasks: tuple[SupplementTask, ...] = Field(
+        default=(), alias="supplementTasks", max_length=2
+    )
+
+    @field_validator("supplement_tasks")
+    @classmethod
+    def limit_supplement_tasks(
+        cls, value: tuple[SupplementTask, ...]
+    ) -> tuple[SupplementTask, ...]:
+        if len(value) > 2:
+            raise ValueError("at most 2 supplement tasks")
         return value
 
 

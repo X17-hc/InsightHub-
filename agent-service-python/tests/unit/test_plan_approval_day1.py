@@ -33,7 +33,8 @@ def test_plan_phase_stops_before_research() -> None:
     assert result.plan is not None
     event_types = {event.type for event in result.events}
     assert {"TASK_STARTED", "PLAN_CREATED", "APPROVAL_REQUIRED"} <= event_types
-    assert all(event.node not in {"dispatch_tasks", "knowledge_research", "web_research", "write_report"}
+    assert all(event.node not in {"dispatch_tasks", "knowledge_research", "web_research",
+                                   "merge_evidence", "critic_review", "write_report"}
                for event in result.events)
 
 

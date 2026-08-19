@@ -2,7 +2,23 @@ import type { TaskEvent, TaskStatus } from '@/types'
 import { isTerminalTaskStatus } from '@/utils/display'
 
 type EventSourceFactory = (url: string) => EventSource
-const EVENT_TYPES = ['TASK_STARTED', 'PLAN_CREATED', 'NODE_STARTED', 'NODE_COMPLETED', 'TOOL_CALLED', 'TOOL_COMPLETED', 'REPORT_DELTA', 'TASK_PAUSED', 'TASK_COMPLETED', 'TASK_FAILED', 'TASK_RESULT']
+const EVENT_TYPES = [
+  'TASK_STARTED',
+  'PLAN_CREATED',
+  'APPROVAL_REQUIRED',
+  'NODE_STARTED',
+  'NODE_COMPLETED',
+  'TOOL_CALLED',
+  'TOOL_COMPLETED',
+  'CRITIC_STARTED',
+  'CRITIQUE_COMPLETED',
+  'SUPPLEMENT_RESEARCH_REQUESTED',
+  'REPORT_DELTA',
+  'TASK_PAUSED',
+  'TASK_COMPLETED',
+  'TASK_FAILED',
+  'TASK_RESULT',
+]
 
 export class TaskEventSource {
   private source: EventSource | null = null
