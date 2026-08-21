@@ -1,0 +1,2 @@
+ALTER TABLE research_task
+    ADD COLUMN IF NOT EXISTS enable_data_analysis BOOLEAN NOT NULL DEFAULT FALSE;

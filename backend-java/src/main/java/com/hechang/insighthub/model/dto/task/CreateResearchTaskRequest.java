@@ -17,4 +17,7 @@ public class CreateResearchTaskRequest {
 
     /** 可选：绑定本工作空间内的知识库 ID 列表 */
     private List<String> knowledgeBaseIds = new ArrayList<>();
+
+    /** 仅用户显式启用时才运行数据分析 Sandbox。 */
+    private boolean enableDataAnalysis;
 }

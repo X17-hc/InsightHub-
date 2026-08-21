@@ -70,6 +70,7 @@ def _build_init_state(
         "verified_evidence_ids": [],
         "deadline_at": context.deadline_at,
         "enable_web_search": request.config.enable_web_search,
+        "enable_data_analysis": request.config.enable_data_analysis,
         "knowledge_base_ids": list(request.knowledge_base_ids),
         "citations": [],
         "errors": [],

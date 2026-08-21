@@ -108,8 +108,8 @@ public class TaskExecutionServiceImpl implements TaskExecutionService {
                 }
             } else {
                 long nextEventId = taskEventService.maxEventNo(taskId) + 1;
-                List<String> kbIds = parseKbIds(
-                        researchTaskMapper.findByIdAndWorkspace(taskId, workspaceId));
+                ResearchTask currentTask = researchTaskMapper.findByIdAndWorkspace(taskId, workspaceId);
+                List<String> kbIds = parseKbIds(currentTask);
                 if (command != null) {
                     agentStreamClient.streamTask(command, timeout, nextEventId <= 1 ? null : nextEventId,
                             node -> handleLine(taskId, workspaceId, node, badLines, generation));
@@ -117,6 +117,7 @@ public class TaskExecutionServiceImpl implements TaskExecutionService {
                     String idem = taskId + "-stream-" + System.currentTimeMillis();
                     agentStreamClient.streamTask(taskId, workspaceId, userId, query, traceId, timeout,
                             nextEventId <= 1 ? null : nextEventId, idem, kbIds,
+                            currentTask != null && Boolean.TRUE.equals(currentTask.getEnableDataAnalysis()),
                             node -> handleLine(taskId, workspaceId, node, badLines, generation));
                 }
             }

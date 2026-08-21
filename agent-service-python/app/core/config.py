@@ -52,6 +52,17 @@ class Settings(BaseSettings):
     # Python 只允许读取该目录内由 Java 上传的文件；相对路径按仓库根目录解析
     upload_root_dir: str = "backend-java/data/uploads"
 
+    # 数据分析 Sandbox：所有路径均由服务端固定，模型不能覆盖这些配置。
+    sandbox_enabled: bool = True
+    sandbox_image: str = "insighthub-analysis-sandbox:1.0.0"
+    sandbox_timeout_seconds: int = 45
+    sandbox_memory_limit: str = "512m"
+    sandbox_cpu_limit: float = 1.0
+    sandbox_pids_limit: int = 64
+    artifact_root_dir: str = "/opt/insighthub/artifacts"
+    artifact_max_count: int = 8
+    artifact_max_total_bytes: int = 20 * 1024 * 1024
+
     # Embedding：维度固定 1536；mock 时用确定性伪向量
     embedding_mock: bool = False
     embedding_base_url: str = "https://api.openai.com/v1"

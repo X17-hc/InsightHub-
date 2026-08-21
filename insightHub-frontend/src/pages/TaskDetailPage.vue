@@ -16,12 +16,11 @@ import StatusTag from '@/components/StatusTag.vue'
 import TaskPlanPanel from '@/components/TaskPlanPanel.vue'
 import TaskReport from '@/components/TaskReport.vue'
 import TaskTimeline from '@/components/TaskTimeline.vue'
-import UnavailableFeatureCard from '@/components/UnavailableFeatureCard.vue'
 import { readSession } from '@/services/session'
 import { useStreamingReport } from '@/services/useStreamingReport'
 import { useTaskEvents } from '@/services/useTaskEvents'
 import { canCancelTask, canLoadReport, canPauseTask, canResumeTask, canRetryTask, formatDate, isTaskStatus, isTerminalTaskStatus } from '@/utils/display'
-import type { Citation, CritiqueResult, CriticVerdict, PlanRevision, Report, ResearchTask, TaskEvent, TaskStatus } from '@/types'
+import type { AnalysisArtifact, Citation, CritiqueResult, CriticVerdict, PlanRevision, Report, ResearchTask, TaskEvent, TaskStatus } from '@/types'
 
 const route = useRoute()
 const router = useRouter()
@@ -30,6 +29,7 @@ const taskId = computed(() => String(route.params.taskId))
 const task = ref<ResearchTask | null>(null)
 const report = ref<Report | null>(null)
 const citations = ref<Citation[]>([])
+const artifacts = ref<AnalysisArtifact[]>([])
 const events = ref<TaskEvent[]>([])
 const currentPlan = ref<PlanRevision | null>(null)
 const planHistory = ref<PlanRevision[]>([])
@@ -132,6 +132,11 @@ async function loadReport() {
   }
 }
 
+async function selectReportVersion(version: number) {
+  try { report.value = await researchTaskApi.reportVersion(workspaceId.value, taskId.value, version) }
+  catch (error) { message.error(error instanceof Error ? error.message : '报告版本加载失败') }
+}
+
 async function loadCitations() {
   try {
     citations.value = await researchTaskApi.citations(workspaceId.value, taskId.value)
@@ -139,6 +144,19 @@ async function loadCitations() {
     citations.value = []
     message.warning(error instanceof Error ? `引用加载失败：${error.message}` : '引用加载失败')
   }
+}
+
+async function loadArtifacts() {
+  try { artifacts.value = await researchTaskApi.artifacts(workspaceId.value, taskId.value) }
+  catch { artifacts.value = [] }
+}
+
+async function downloadArtifact(artifact: AnalysisArtifact) {
+  try {
+    const blob = await researchTaskApi.artifactContent(workspaceId.value, taskId.value, artifact.id, 'attachment')
+    const url = URL.createObjectURL(blob); const link = document.createElement('a')
+    link.href = url; link.download = artifact.fileName; link.click(); URL.revokeObjectURL(url)
+  } catch (error) { message.error(error instanceof Error ? error.message : '产物下载失败') }
 }
 
 async function loadEvents() {
@@ -180,7 +198,7 @@ async function loadAll() {
   try {
     await loadTask()
     selectInitialTab()
-    await Promise.all([loadReport(), loadCitations(), loadEvents(), loadPlans()])
+    await Promise.all([loadReport(), loadCitations(), loadArtifacts(), loadEvents(), loadPlans()])
     connectEvents()
   } catch (error) {
     message.error(error instanceof Error ? error.message : '任务详情加载失败')
@@ -197,7 +215,7 @@ function connectEvents() {
 
 async function refreshAfterResult() {
   await loadTask()
-  await Promise.all([loadReport(), loadCitations(), loadPlans()])
+  await Promise.all([loadReport(), loadCitations(), loadArtifacts(), loadPlans()])
   if (terminal.value) eventStream.close()
 }
 
@@ -329,12 +347,12 @@ onBeforeUnmount(() => eventStream.close())
             <div :class="{ 'mobile-hidden': activeTab !== 'plan' }"><TaskPlanPanel :plan="currentPlan" :task-status="task.status" :loading="planLoading" :is-creator="isCreator" :action-loading="planActionLoading" :history-count="planHistory.length" @approve="planApprovalOpen = true" @revise="planRevisionOpen = true" @show-history="planHistoryOpen = true"/></div>
             <div class="activity-section" :class="{ 'mobile-hidden': activeTab !== 'activity' }"><div class="section-title"><div><h2>执行动态</h2><p>按事件序号实时接收，断线后自动续传。</p></div><span v-if="events.length" class="event-count">{{ events.length }} 个事件</span></div><TaskTimeline :events="events" :terminal="terminal"/></div>
           </section>
-          <section class="report-column" :class="{ 'mobile-hidden': activeTab !== 'report' }"><TaskReport :report="report" :streaming-content="streamingReport" :status="task.status"/></section>
+          <section class="report-column" :class="{ 'mobile-hidden': activeTab !== 'report' }"><TaskReport :report="report" :streaming-content="streamingReport" :status="task.status" :workspace-id="workspaceId" :task-id="taskId" @select-version="selectReportVersion"/></section>
           <section class="quality-column" :class="{ 'mobile-hidden': activeTab !== 'sources' }">
             <CriticSummaryCard :critique="critique" :reviewing="criticReviewing" :supplementing="criticSupplementing" :terminal="terminal"/>
             <div class="section-title citation-heading"><div><h2>引用来源</h2><p>报告中使用的可追溯材料。</p></div><span class="event-count">{{ citations.length }} 条</span></div>
             <CitationList :citations="citations"/>
-            <div class="future-features"><UnavailableFeatureCard title="分析产物" description="后端 Artifact 与 Sandbox 接口完成后，可在此查看分析表格、图表和可复现文件。" :features="['CSV / JSON / Parquet', '图表预览', '授权下载']"><template #icon><BarChart3 :size="18"/></template></UnavailableFeatureCard><UnavailableFeatureCard title="报告版本与导出" description="当前展示最新 Markdown 报告，历史快照与鉴权导出将在服务端能力就绪后开放。" :features="['历史版本', 'HTML', 'PDF']"><template #icon><Database :size="18"/></template></UnavailableFeatureCard></div>
+            <div class="future-features"><div class="soft-panel"><div class="section-title"><div><h2><BarChart3 :size="18"/> 分析产物</h2><p>受限 Sandbox 生成的表格与图表。</p></div><span>{{ artifacts.length }} 项</span></div><a-list v-if="artifacts.length" size="small" :data-source="artifacts"><template #renderItem="item"><a-list-item><span>{{ item.title || item.fileName }} · {{ item.mimeType }}</span><a-button type="link" @click="downloadArtifact(item)">下载</a-button></a-list-item></template></a-list><p v-else>暂无分析产物；创建任务时启用“生成分析产物”后可生成。</p></div><div class="soft-panel"><div class="section-title"><div><h2><Database :size="18"/> 报告版本与导出</h2><p>历史版本和 HTML/PDF 导出位于报告区域。</p></div></div></div></div>
           </section>
         </div>
       </template>

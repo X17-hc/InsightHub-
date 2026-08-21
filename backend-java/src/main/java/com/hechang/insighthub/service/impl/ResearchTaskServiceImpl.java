@@ -121,7 +121,7 @@ public class ResearchTaskServiceImpl extends ServiceImpl<ResearchTaskMapper, Res
 
         try {
             slotTracker.markHeld(taskId, workspaceId, permitId, ttl);
-            insertCreatedTask(taskId, workspaceId, userId, query, traceId, kbIds);
+            insertCreatedTask(taskId, workspaceId, userId, query, traceId, kbIds, request.isEnableDataAnalysis());
             advance(taskId, workspaceId, TaskStatus.CREATED, TaskStatus.PLANNING, 10, "create_plan");
             taskControlRedis.setControl(taskId, TaskControlRedis.CONTROL_RUNNING, ttl);
             taskExecutionService.executeStream(taskId, workspaceId, userId, query, traceId, false);
@@ -153,12 +153,13 @@ public class ResearchTaskServiceImpl extends ServiceImpl<ResearchTaskMapper, Res
         String permitId = concurrencyService.tryAcquire(workspaceId, ttl);
 
         try {
-            insertCreatedTask(taskId, workspaceId, userId, query, traceId, kbIds);
+            insertCreatedTask(taskId, workspaceId, userId, query, traceId, kbIds, request.isEnableDataAnalysis());
             advance(taskId, workspaceId, TaskStatus.CREATED, TaskStatus.PLANNING, 10, "create_plan");
 
             AgentTaskResponseDto response;
             try {
-                response = agentServiceClient.createTask(taskId, workspaceId, userId, query, traceId, kbIds);
+                response = agentServiceClient.createTask(taskId, workspaceId, userId, query, traceId, kbIds,
+                        request.isEnableDataAnalysis());
             } catch (Exception ex) {
                 log.error("Agent call failed taskId={} workspace={}", taskId, workspaceId, ex);
                 markFailedSync(taskId, workspaceId, "AGENT_CALL_FAILED", "agent service call failed");
@@ -244,6 +245,16 @@ public class ResearchTaskServiceImpl extends ServiceImpl<ResearchTaskMapper, Res
     @Override
     public ReportResponse getReport(String workspaceId, String taskId) {
         return taskQueryService.getReport(workspaceId, taskId);
+    }
+
+    @Override
+    public List<ReportVersionResponse> listReportVersions(String workspaceId, String taskId) {
+        return taskQueryService.listReportVersions(workspaceId, taskId);
+    }
+
+    @Override
+    public ReportResponse getReportVersion(String workspaceId, String taskId, int version) {
+        return taskQueryService.getReportVersion(workspaceId, taskId, version);
     }
 
     @Override
@@ -406,7 +417,7 @@ public class ResearchTaskServiceImpl extends ServiceImpl<ResearchTaskMapper, Res
             String creatorId,
             String query,
             String traceId,
-            List<String> knowledgeBaseIds) {
+            List<String> knowledgeBaseIds, boolean enableDataAnalysis) {
         ResearchTask task = new ResearchTask();
         task.setId(taskId);
         task.setWorkspaceId(workspaceId);
@@ -415,6 +426,7 @@ public class ResearchTaskServiceImpl extends ServiceImpl<ResearchTaskMapper, Res
         task.setStatus(TaskStatus.CREATED.name());
         task.setProgress(0);
         task.setTraceId(traceId);
+        task.setEnableDataAnalysis(enableDataAnalysis);
         try {
             task.setKnowledgeBaseIds(objectMapper.writeValueAsString(
                     knowledgeBaseIds == null ? List.of() : knowledgeBaseIds));

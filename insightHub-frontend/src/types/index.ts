@@ -159,6 +159,29 @@ export interface Report {
   updatedAt: string
 }
 
+export interface ReportVersion {
+  id: string
+  version: number
+  title: string
+  status: string
+  createdAt: string
+  updatedAt: string
+}
+
+export interface AnalysisArtifact {
+  id: string
+  taskId: string
+  workspaceId: string
+  runId?: string
+  artifactType: string
+  title?: string
+  fileName: string
+  mimeType: string
+  size: number
+  status: string
+  createdAt: string
+}
+
 export interface Citation {
   id: string
   reportId: string

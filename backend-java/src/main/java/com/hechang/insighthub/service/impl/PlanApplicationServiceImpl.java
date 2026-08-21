@@ -278,7 +278,8 @@ public class PlanApplicationServiceImpl extends ServiceImpl<TaskPlanRevisionMapp
             eventPublisher.publishEvent(new TaskEventPublished(taskId, revised));
             eventPublisher.publishEvent(new TaskDispatchRequested(enqueue(new TaskDispatchCommand(
                     taskId, workspaceId, actor.userId(), task.getQuery(), task.getTraceId(),
-                    runId, "PLAN", nextRevision, request.revision(), null, knowledgeBaseIds(task)
+                    runId, "PLAN", nextRevision, request.revision(), null, knowledgeBaseIds(task),
+                    Boolean.TRUE.equals(task.getEnableDataAnalysis())
                     ))));
             return new PlanActionResponse(taskId, nextRevision, TaskStatus.PLANNING.name(), runId);
         } catch (RuntimeException ex) {
@@ -313,7 +314,8 @@ public class PlanApplicationServiceImpl extends ServiceImpl<TaskPlanRevisionMapp
     private TaskDispatchCommand commandFor(ResearchTask task, TaskPlanRevision revision, String userId,
             String phase, String instruction, String approvedHash) {
         return new TaskDispatchCommand(task.getId(), task.getWorkspaceId(), userId, task.getQuery(), task.getTraceId(),
-                task.getCurrentRunId(), phase, revision.getRevisionNo(), instruction, approvedHash, knowledgeBaseIds(task));
+                task.getCurrentRunId(), phase, revision.getRevisionNo(), instruction, approvedHash, knowledgeBaseIds(task),
+                Boolean.TRUE.equals(task.getEnableDataAnalysis()));
     }
 
     private List<String> knowledgeBaseIds(ResearchTask task) {

@@ -6,6 +6,8 @@ import com.hechang.insighthub.model.dto.task.*;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.ContentDisposition;
+import java.nio.charset.StandardCharsets;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -21,6 +23,8 @@ import com.hechang.insighthub.common.BaseResponse;
 import com.hechang.insighthub.common.ResultUtils;
 import com.hechang.insighthub.model.dto.knowledge.CitationResponse;
 import com.hechang.insighthub.service.ResearchTaskService;
+import com.hechang.insighthub.service.impl.ReportExportService;
+import com.hechang.insighthub.service.impl.AnalysisArtifactService;
 
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
@@ -39,6 +43,8 @@ import lombok.RequiredArgsConstructor;
 public class ResearchTaskController {
 
     private final ResearchTaskService researchTaskService;
+    private final ReportExportService reportExportService;
+    private final AnalysisArtifactService analysisArtifactService;
 
 
     @PostMapping
@@ -78,6 +84,62 @@ public class ResearchTaskController {
             @PathVariable String workspaceId,
             @PathVariable String taskId) {
         return ResultUtils.success(researchTaskService.getReport(workspaceId, taskId));
+    }
+
+    @GetMapping("/{taskId}/reports")
+    @Operation(summary = "报告版本列表（倒序）")
+    public BaseResponse<List<ReportVersionResponse>> reportVersions(
+            @PathVariable String workspaceId, @PathVariable String taskId) {
+        return ResultUtils.success(researchTaskService.listReportVersions(workspaceId, taskId));
+    }
+
+    @GetMapping("/{taskId}/reports/{version}")
+    @Operation(summary = "读取指定报告版本")
+    public BaseResponse<ReportResponse> reportVersion(
+            @PathVariable String workspaceId, @PathVariable String taskId, @PathVariable int version) {
+        return ResultUtils.success(researchTaskService.getReportVersion(workspaceId, taskId, version));
+    }
+
+    @GetMapping("/{taskId}/reports/{version}/exports/html")
+    @Operation(summary = "导出指定报告版本 HTML")
+    public ResponseEntity<byte[]> exportHtml(@PathVariable String workspaceId, @PathVariable String taskId,
+            @PathVariable int version) {
+        ReportResponse report = researchTaskService.getReportVersion(workspaceId, taskId, version);
+        return export(reportExportService.html(report.getMarkdownContent(), report.getTitle()), MediaType.TEXT_HTML,
+                report.getTitle(), "html");
+    }
+
+    @GetMapping("/{taskId}/reports/{version}/exports/pdf")
+    @Operation(summary = "导出指定报告版本 PDF")
+    public ResponseEntity<byte[]> exportPdf(@PathVariable String workspaceId, @PathVariable String taskId,
+            @PathVariable int version) {
+        ReportResponse report = researchTaskService.getReportVersion(workspaceId, taskId, version);
+        return export(reportExportService.pdf(report.getMarkdownContent(), report.getTitle()), MediaType.APPLICATION_PDF,
+                report.getTitle(), "pdf");
+    }
+
+    private static ResponseEntity<byte[]> export(byte[] content, MediaType type, String title, String extension) {
+        String filename = (title == null || title.isBlank() ? "insighthub-report" : title) + "." + extension;
+        return ResponseEntity.ok().contentType(type)
+                .header("Content-Disposition", ContentDisposition.attachment().filename(filename, StandardCharsets.UTF_8).build().toString())
+                .contentLength(content.length).body(content);
+    }
+
+    @GetMapping("/{taskId}/artifacts")
+    @Operation(summary = "任务分析产物列表")
+    public BaseResponse<List<AnalysisArtifactResponse>> artifacts(@PathVariable String workspaceId, @PathVariable String taskId) {
+        return ResultUtils.success(analysisArtifactService.list(workspaceId, taskId));
+    }
+
+    @GetMapping("/{taskId}/artifacts/{artifactId}/content")
+    @Operation(summary = "预览或下载分析产物")
+    public ResponseEntity<byte[]> artifactContent(@PathVariable String workspaceId, @PathVariable String taskId,
+            @PathVariable String artifactId, @RequestParam(defaultValue = "inline") String disposition) {
+        AnalysisArtifactService.ArtifactContent content = analysisArtifactService.content(workspaceId, taskId, artifactId);
+        boolean attachment = "attachment".equalsIgnoreCase(disposition);
+        return ResponseEntity.ok().contentType(content.type()).contentLength(content.bytes().length)
+                .header("Content-Disposition", (attachment ? ContentDisposition.attachment() : ContentDisposition.inline())
+                        .filename(content.filename(), StandardCharsets.UTF_8).build().toString()).body(content.bytes());
     }
 
     @GetMapping("/{taskId}/citations")

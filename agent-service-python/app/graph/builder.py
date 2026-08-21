@@ -18,6 +18,7 @@ from app.agents.planner import create_plan
 from app.agents.researcher import web_research
 from app.agents.supervisor import dispatch_tasks
 from app.agents.writer import finalize, write_report
+from app.agents.data_analysis import data_analysis
 from app.core.config import get_settings
 from app.graph.state import ResearchState
 
@@ -121,6 +122,10 @@ def _route_after_node(state: ResearchState) -> str:
     """任一节点失败后立即终止，禁止后续节点覆盖终态。"""
     return "stop" if state.get("status") == "FAILED" else "continue"
 
+def _route_after_critic(state: ResearchState) -> str:
+    route = route_after_critic(state)
+    return "analysis" if route == "write" and state.get("enable_data_analysis") else route
+
 
 def build_graph(checkpointer: BaseCheckpointSaver[Any] | None = None):
     """
@@ -138,6 +143,7 @@ def build_graph(checkpointer: BaseCheckpointSaver[Any] | None = None):
     graph.add_node("merge_evidence", merge_evidence)
     graph.add_node("critic_review", critic_review)
     graph.add_node("supplement_research", supplement_research)
+    graph.add_node("data_analysis", data_analysis)
     graph.add_node("write_report", write_report)
     graph.add_node("finalize", finalize)
 
@@ -156,14 +162,15 @@ def build_graph(checkpointer: BaseCheckpointSaver[Any] | None = None):
         "merge_evidence", _route_after_node, {"stop": END, "continue": "critic_review"})
     graph.add_conditional_edges(
         "critic_review",
-        route_after_critic,
-        {"stop": END, "supplement": "supplement_research", "write": "write_report"},
+        _route_after_critic,
+        {"stop": END, "supplement": "supplement_research", "write": "write_report", "analysis": "data_analysis"},
     )
     graph.add_conditional_edges(
         "supplement_research",
         _route_after_node,
         {"stop": END, "continue": "knowledge_research"},
     )
+    graph.add_conditional_edges("data_analysis", _route_after_node, {"stop": END, "continue": "write_report"})
     graph.add_conditional_edges(
         "write_report", _route_after_node, {"stop": END, "continue": "finalize"})
     graph.add_edge("finalize", END)

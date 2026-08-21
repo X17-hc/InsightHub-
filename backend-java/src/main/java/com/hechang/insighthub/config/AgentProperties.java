@@ -21,7 +21,7 @@ public class AgentProperties {
 
     /** Agent 服务根地址，例如 http://127.0.0.1:8000 */
     @NotBlank
-    private String baseUrl = "http://127.0.0.1:8000";
+    private String baseUrl = "http://192.168.100.128:8000";
 
     /** 连接超时（毫秒） */
     @Positive

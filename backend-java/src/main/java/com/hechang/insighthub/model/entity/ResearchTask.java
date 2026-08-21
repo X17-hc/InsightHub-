@@ -61,6 +61,9 @@ public class ResearchTask {
     @Column("knowledge_base_ids")
     private String knowledgeBaseIds;
 
+    @Column("enable_data_analysis")
+    private Boolean enableDataAnalysis;
+
     @Column("trace_id")
     private String traceId;
 

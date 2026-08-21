@@ -29,6 +29,10 @@ public interface ResearchTaskService extends IService<ResearchTask> {
     /** Latest generated report for a task. */
     ReportResponse getReport(String workspaceId, String taskId);
 
+    List<ReportVersionResponse> listReportVersions(String workspaceId, String taskId);
+
+    ReportResponse getReportVersion(String workspaceId, String taskId, int version);
+
     /** 任务引用列表（可追溯来源） */
     List<CitationResponse> listCitations(String workspaceId, String taskId);
 

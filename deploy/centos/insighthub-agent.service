@@ -1,0 +1,21 @@
+[Unit]
+Description=InsightHub Python Agent
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=insighthub
+Group=insighthub
+WorkingDirectory=/opt/insighthub/agent
+EnvironmentFile=/etc/insighthub/agent.env
+ExecStart=/opt/insighthub/agent/.venv/bin/uvicorn app.main:app --app-dir /opt/insighthub/agent/agent-service-python --host 0.0.0.0 --port 8000
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/opt/insighthub/artifacts /opt/insighthub/agent
+
+[Install]
+WantedBy=multi-user.target

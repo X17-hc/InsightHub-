@@ -13,6 +13,7 @@ import com.hechang.insighthub.mapper.ResearchTaskMapper;
 import com.hechang.insighthub.mapper.TaskEventMapper;
 import com.hechang.insighthub.model.dto.knowledge.CitationResponse;
 import com.hechang.insighthub.model.dto.task.ReportResponse;
+import com.hechang.insighthub.model.dto.task.ReportVersionResponse;
 import com.hechang.insighthub.model.dto.task.TaskEventResponse;
 import com.hechang.insighthub.model.dto.task.TaskSummaryResponse;
 import com.hechang.insighthub.model.entity.Citation;
@@ -67,11 +68,37 @@ public class ResearchTaskQueryService {
                 report.getCreatedAt(), report.getUpdatedAt());
     }
 
+    public List<ReportVersionResponse> listReportVersions(String workspaceId, String taskId) {
+        requireMembership(workspaceId);
+        requireTask(workspaceId, taskId);
+        return reportMapper.selectListByQuery(QueryWrapper.create()
+                .eq(Report::getTaskId, taskId).eq(Report::getWorkspaceId, workspaceId)
+                .orderBy(Report::getVersion, false)).stream()
+                .map(report -> new ReportVersionResponse(report.getId(), report.getVersion(), report.getTitle(),
+                        report.getStatus(), report.getCreatedAt(), report.getUpdatedAt()))
+                .toList();
+    }
+
+    public ReportResponse getReportVersion(String workspaceId, String taskId, int version) {
+        requireMembership(workspaceId);
+        requireTask(workspaceId, taskId);
+        Report report = reportMapper.selectOneByQuery(QueryWrapper.create()
+                .eq(Report::getTaskId, taskId).eq(Report::getWorkspaceId, workspaceId)
+                .eq(Report::getVersion, version));
+        if (report == null) throw BusinessException.notFound("report version not found");
+        return new ReportResponse(report.getId(), report.getTaskId(), report.getWorkspaceId(), report.getVersion(),
+                report.getTitle(), report.getMarkdownContent(), report.getStatus(), report.getCreatedAt(), report.getUpdatedAt());
+    }
+
     public List<CitationResponse> listCitations(String workspaceId, String taskId) {
         requireMembership(workspaceId);
         requireTask(workspaceId, taskId);
+        Report latest = reportMapper.selectOneByQuery(QueryWrapper.create()
+                .eq(Report::getTaskId, taskId).eq(Report::getWorkspaceId, workspaceId)
+                .orderBy(Report::getVersion, false).limit(1));
+        if (latest == null) return List.of();
         return citationMapper.selectListByQuery(QueryWrapper.create()
-                .eq(Citation::getTaskId, taskId)
+                .eq(Citation::getReportId, latest.getId())
                 .orderBy(Citation::getCitationNo, true)).stream()
                 .map(ResearchTaskQueryService::toCitationResponse)
                 .toList();

@@ -42,14 +42,14 @@ public class AgentServiceClient {
             String userId,
             String query,
             String traceId,
-            List<String> knowledgeBaseIds) {
+            List<String> knowledgeBaseIds, boolean enableDataAnalysis) {
         Map<String, Object> config = new HashMap<>();
         config.put("maxSteps", 20);
         config.put("maxParallelism", 3);
         config.put("requirePlanApproval", false);
         config.put("enableWebSearch", true);
         config.put("maxCriticRounds", 2);
-        config.put("enableDataAnalysis", false);
+        config.put("enableDataAnalysis", enableDataAnalysis);
 
         Map<String, Object> body = new HashMap<>();
         body.put("taskId", taskId);

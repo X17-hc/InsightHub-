@@ -59,9 +59,10 @@ public class AgentStreamClient {
             Long nextEventId,
             String idempotencyKey,
             List<String> knowledgeBaseIds,
+            boolean enableDataAnalysis,
             Consumer<JsonNode> onLine) {
         Map<String, Object> body = buildBody(
-                taskId, workspaceId, userId, query, timeoutSec, nextEventId, knowledgeBaseIds);
+                taskId, workspaceId, userId, query, timeoutSec, nextEventId, knowledgeBaseIds, enableDataAnalysis);
         String key = idempotencyKey == null || idempotencyKey.isBlank()
                 ? taskId + "-stream-1"
                 : idempotencyKey;
@@ -227,14 +228,15 @@ public class AgentStreamClient {
             String query,
             int timeoutSec,
             Long nextEventId,
-            List<String> knowledgeBaseIds) {
+            List<String> knowledgeBaseIds,
+            boolean enableDataAnalysis) {
         Map<String, Object> config = new HashMap<>();
         config.put("maxSteps", 20);
         config.put("maxParallelism", 3);
         config.put("requirePlanApproval", true);
         config.put("enableWebSearch", true);
         config.put("maxCriticRounds", 2);
-        config.put("enableDataAnalysis", false);
+        config.put("enableDataAnalysis", enableDataAnalysis);
         config.put("timeoutSeconds", timeoutSec);
         if (nextEventId != null && nextEventId > 1) {
             config.put("nextEventId", nextEventId);
@@ -254,7 +256,7 @@ public class AgentStreamClient {
 
     private static Map<String, Object> buildBody(TaskDispatchCommand command, int timeoutSec, Long nextEventId) {
         Map<String, Object> body = buildBody(command.taskId(), command.workspaceId(), command.userId(), command.query(),
-                timeoutSec, nextEventId, command.knowledgeBaseIds());
+                timeoutSec, nextEventId, command.knowledgeBaseIds(), command.enableDataAnalysis());
         body.put("phase", command.phase());
         body.put("runId", command.runId());
         body.put("planRevision", command.planRevision());

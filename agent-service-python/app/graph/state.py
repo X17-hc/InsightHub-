@@ -42,6 +42,7 @@ class ResearchState(TypedDict, total=False):
     verified_evidence_ids: list[str]
     deadline_at: float
     enable_web_search: bool
+    enable_data_analysis: bool
     knowledge_base_ids: list[str]
     citations: list[dict[str, Any]]
     errors: list[dict[str, Any]]

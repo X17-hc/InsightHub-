@@ -10,6 +10,8 @@ import type {
   TaskAccepted,
   TaskControl,
   TaskEvent,
+  ReportVersion,
+  AnalysisArtifact,
 } from '@/types'
 
 const base = (workspaceId: string) => `/v1/workspaces/${workspaceId}/research/tasks`
@@ -17,12 +19,19 @@ const base = (workspaceId: string) => `/v1/workspaces/${workspaceId}/research/ta
 export const researchTaskApi = {
   list: (workspaceId: string) => http.get<ResearchTask[]>(base(workspaceId)),
   get: (workspaceId: string, taskId: string) => http.get<ResearchTask>(`${base(workspaceId)}/${taskId}`),
-  create: (workspaceId: string, payload: { query: string; knowledgeBaseIds: string[] }) => http.post<TaskAccepted>(base(workspaceId), payload),
+  create: (workspaceId: string, payload: { query: string; knowledgeBaseIds: string[]; enableDataAnalysis?: boolean }) => http.post<TaskAccepted>(base(workspaceId), payload),
   pause: (workspaceId: string, taskId: string) => http.post<TaskControl>(`${base(workspaceId)}/${taskId}/pause`),
   resume: (workspaceId: string, taskId: string) => http.post<TaskControl>(`${base(workspaceId)}/${taskId}/resume`),
   cancel: (workspaceId: string, taskId: string) => http.post<TaskControl>(`${base(workspaceId)}/${taskId}/cancel`),
   retry: (workspaceId: string, taskId: string) => http.post<TaskAccepted>(`${base(workspaceId)}/${taskId}/retry`),
   report: (workspaceId: string, taskId: string) => http.get<Report>(`${base(workspaceId)}/${taskId}/report`),
+  reportVersions: (workspaceId: string, taskId: string) => http.get<ReportVersion[]>(`${base(workspaceId)}/${taskId}/reports`),
+  reportVersion: (workspaceId: string, taskId: string, version: number) => http.get<Report>(`${base(workspaceId)}/${taskId}/reports/${version}`),
+  reportExport: (workspaceId: string, taskId: string, version: number, type: 'html' | 'pdf') =>
+    http.get<Blob>(`${base(workspaceId)}/${taskId}/reports/${version}/exports/${type}`, { responseType: 'blob' }),
+  artifacts: (workspaceId: string, taskId: string) => http.get<AnalysisArtifact[]>(`${base(workspaceId)}/${taskId}/artifacts`),
+  artifactContent: (workspaceId: string, taskId: string, artifactId: string, disposition: 'inline' | 'attachment') =>
+    http.get<Blob>(`${base(workspaceId)}/${taskId}/artifacts/${artifactId}/content`, { params: { disposition }, responseType: 'blob' }),
   citations: (workspaceId: string, taskId: string) => http.get<Citation[]>(`${base(workspaceId)}/${taskId}/citations`),
   currentPlan: (workspaceId: string, taskId: string) =>
     http.get<PlanRevision>(`${base(workspaceId)}/${taskId}/plan`),

@@ -8,10 +8,12 @@ import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.hechang.insighthub.mapper.CitationMapper;
 import com.hechang.insighthub.mapper.ReportMapper;
+import com.hechang.insighthub.mapper.ResearchTaskMapper;
 import com.hechang.insighthub.model.entity.Citation;
 import com.hechang.insighthub.model.entity.Report;
 import com.mybatisflex.core.query.QueryWrapper;
@@ -26,6 +28,8 @@ public class TaskResultService {
     private ReportMapper reportMapper;
     @Resource
     private CitationMapper citationMapper;
+    @Resource
+    private ResearchTaskMapper researchTaskMapper;
 
     public String saveReportAndCitations(String taskId, String workspaceId, String markdown, JsonNode citationsNode) {
         List<Map<String, Object>> citations = new java.util.ArrayList<>();
@@ -39,23 +43,32 @@ public class TaskResultService {
         return saveReportAndCitations(taskId, workspaceId, markdown, citations);
     }
 
+    @Transactional
     public String saveReportAndCitations(
             String taskId, String workspaceId, String markdown, List<Map<String, Object>> citations) {
         if (markdown != null && markdown.indexOf('\uFFFD') >= 0) {
             log.error("report markdown contains U+FFFD replacement chars taskId={} workspaceId={}", taskId, workspaceId);
         }
+        // Lock the owning task before calculating the next version. The report unique
+        // constraint remains the final guard for concurrent completion callbacks.
+        if (researchTaskMapper.findByIdAndWorkspaceForUpdate(taskId, workspaceId) == null) {
+            throw new IllegalStateException("task does not exist while saving report");
+        }
+        Report previous = reportMapper.selectOneByQuery(QueryWrapper.create()
+                .eq(Report::getTaskId, taskId).eq(Report::getWorkspaceId, workspaceId)
+                .orderBy(Report::getVersion, false).limit(1));
+        int nextVersion = previous == null || previous.getVersion() == null ? 1 : previous.getVersion() + 1;
         String reportId = "report-" + UUID.randomUUID().toString().replace("-", "").substring(0, 16);
         Report report = new Report();
         report.setId(reportId);
         report.setTaskId(taskId);
         report.setWorkspaceId(workspaceId);
-        report.setVersion(1);
+        report.setVersion(nextVersion);
         report.setTitle(extractTitle(markdown));
         report.setMarkdownContent(markdown);
         report.setStatus("READY");
         reportMapper.insert(report);
 
-        citationMapper.deleteByQuery(QueryWrapper.create().eq(Citation::getTaskId, taskId));
         if (citations != null && !citations.isEmpty()) {
             int index = 0;
             for (Map<String, Object> source : citations) {
