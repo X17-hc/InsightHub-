@@ -35,4 +35,14 @@ describe('TaskEventSource', () => {
     expect(stream.getLastEventNo()).toBe(9)
     expect(source.closed).toBe(true)
   })
+
+  it('subscribes to week five named events', () => {
+    const received: TaskEvent[] = []
+    const stream = new TaskEventSource('workspace', 'task', 'token', (event) => received.push(event), undefined, 0, (url) => new FakeEventSource(url) as unknown as EventSource)
+    stream.connect()
+    const source = FakeEventSource.instances[0]
+    source.emit('PLAN_REVISED', { eventId: 1, type: 'PLAN_REVISED' }, 1)
+    source.emit('SANDBOX_COMPLETED', { eventId: 2, type: 'SANDBOX_COMPLETED' }, 2)
+    expect(received.map((event) => event.type)).toEqual(['PLAN_REVISED', 'SANDBOX_COMPLETED'])
+  })
 })

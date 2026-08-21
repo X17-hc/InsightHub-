@@ -86,6 +86,67 @@ export interface TaskEvent {
   data?: Record<string, unknown>
 }
 
+export type ResearchPlanTaskType = 'web_research' | 'knowledge_research'
+
+export interface ResearchPlanTask {
+  id: string
+  type: ResearchPlanTaskType | string
+  description: string
+  dependsOn: string[]
+}
+
+export interface ResearchPlan {
+  title: string
+  objective: string
+  tasks: ResearchPlanTask[]
+}
+
+export type PlanRevisionStatus = 'PENDING' | 'APPROVED' | 'SUPERSEDED'
+
+export interface PlanRevision {
+  id: string
+  taskId: string
+  workspaceId: string
+  revisionNo: number
+  status: PlanRevisionStatus
+  plan: ResearchPlan
+  planHash: string
+  revisionInstruction?: string
+  createdBy: string
+  approvedBy?: string
+  createdAt: string
+  approvedAt?: string
+}
+
+export interface PlanActionResponse {
+  taskId: string
+  revisionNo: number
+  status: TaskStatus
+  runId: string
+}
+
+export interface ApprovePlanPayload {
+  expectedRevision: number
+  remark?: string
+}
+
+export interface RevisePlanPayload {
+  expectedRevision: number
+  revision: string
+}
+
+export type CriticVerdict = 'PASS' | 'SUPPLEMENT' | 'FAIL'
+
+export interface CritiqueResult {
+  verdict: CriticVerdict
+  summary?: string
+  gaps: string[]
+  limitations: string[]
+  supplementTaskCount: number
+  criticRound?: number
+  maxCriticRounds?: number
+}
+
 export interface Report {
   id: string
   taskId: string
@@ -109,7 +170,7 @@ export interface Citation {
   documentId?: string
   chunkId?: string
   quotedText?: string
-  verified: number
+  verified: boolean | number
   createdAt: string
 }
 

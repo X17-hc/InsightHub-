@@ -1,4 +1,4 @@
-import type { TaskStatus } from '@/types'
+import type { CriticVerdict, PlanRevisionStatus, TaskStatus } from '@/types'
 export const taskStatusValues: TaskStatus[] = ['CREATED', 'PLANNING', 'WAITING_APPROVAL', 'RUNNING', 'PAUSING', 'PAUSED', 'REVIEWING', 'GENERATING', 'COMPLETED', 'FAILED', 'CANCELLED']
 export const taskStatusMeta: Record<TaskStatus, { label: string; color: string }> = {
   CREATED: { label: '已创建', color: 'default' }, PLANNING: { label: '规划中', color: 'blue' }, WAITING_APPROVAL: { label: '待确认', color: 'gold' }, RUNNING: { label: '运行中', color: 'blue' }, PAUSING: { label: '暂停中', color: 'gold' }, PAUSED: { label: '已暂停', color: 'gold' }, REVIEWING: { label: '复核中', color: 'cyan' }, GENERATING: { label: '生成报告', color: 'blue' }, COMPLETED: { label: '已完成', color: 'green' }, FAILED: { label: '失败', color: 'red' }, CANCELLED: { label: '已取消', color: 'default' },
@@ -14,3 +14,21 @@ export function isActiveTask(status?: TaskStatus): boolean { return status === '
 export const documentStatusMeta = { PENDING: { label: '等待解析', color: 'default' }, PARSING: { label: '解析中', color: 'blue' }, INDEXED: { label: '已索引', color: 'green' }, FAILED: { label: '解析失败', color: 'red' } } as const
 export function formatDate(value?: string): string { if (!value) return '--'; const date = new Date(value); if (Number.isNaN(date.getTime())) return value; return new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).format(date) }
 export function formatBytes(bytes?: number): string { if (!bytes) return '0 B'; if (bytes < 1024) return `${bytes} B`; if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`; return `${(bytes / 1024 / 1024).toFixed(1)} MB` }
+
+export const planStatusMeta: Record<PlanRevisionStatus, { label: string; color: string }> = {
+  PENDING: { label: '待确认', color: 'gold' },
+  APPROVED: { label: '已批准', color: 'green' },
+  SUPERSEDED: { label: '已替代', color: 'default' },
+}
+
+export const criticVerdictMeta: Record<CriticVerdict, { label: string; tone: string }> = {
+  PASS: { label: '证据已通过质量评审', tone: 'success' },
+  SUPPLEMENT: { label: 'Critic 请求补充研究', tone: 'warning' },
+  FAIL: { label: '证据不足，报告包含限制说明', tone: 'danger' },
+}
+
+export function researchTaskTypeLabel(type?: string): string {
+  if (type === 'web_research') return '网络研究'
+  if (type === 'knowledge_research') return '知识库研究'
+  return '其他任务'
+}

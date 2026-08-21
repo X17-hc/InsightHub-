@@ -39,7 +39,7 @@ spring:
 insighthub:
   agent:
     base-url: ${AGENT_BASE_URL:http://127.0.0.1:8000}
-    internal-token: ${AGENT_INTERNAL_TOKEN:MyV3ryS3cur3InternalT0k3n!}
+    internal-token: ${AGENT_INTERNAL_TOKEN:change-me-in-local-env}
     connect-timeout-ms: 5000
     read-timeout-ms: 300000
   upload:
