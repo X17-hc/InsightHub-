@@ -10,23 +10,29 @@
     "test": "node ./node_modules/vitest/vitest.mjs run"
   },
   "dependencies": {
+    "@lucide/vue": "^1.30.0",
     "ant-design-vue": "^4.2.6",
     "axios": "^1.7.9",
     "highlight.js": "^11.11.1",
-    "@lucide/vue": "^1.30.0",
     "markdown-it": "^14.1.0",
+    "performative-ui": "^0.7.0",
     "pinia": "^2.3.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
     "vue": "^3.5.13",
     "vue-router": "^4.5.0"
   },
   "devDependencies": {
     "@tsconfig/node22": "^22.0.2",
-    "@types/node": "^22.10.5",
     "@types/markdown-it": "^14.1.2",
+    "@types/node": "^22.10.5",
+    "@types/react": "^18.3.31",
+    "@types/react-dom": "^18.3.7",
+    "@vitejs/plugin-react": "^4.7.0",
     "@vitejs/plugin-vue": "^5.2.1",
     "@vue/tsconfig": "^0.7.0",
-    "typescript": "~5.7.2",
     "terser": "^5.49.2",
+    "typescript": "~5.7.2",
     "vite": "^6.0.5",
     "vitest": "^4.1.10",
     "vue-tsc": "^2.2.0"

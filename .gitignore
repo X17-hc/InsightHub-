@@ -1,5 +1,6 @@
 # 环境与密钥
 .env
+.local-agent-token.txt
 *.pem
 *.key
 

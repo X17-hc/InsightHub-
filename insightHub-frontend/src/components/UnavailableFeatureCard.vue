@@ -1,9 +1,11 @@
 <script setup lang="ts">
+import { PerformativeIsland, GlassCard } from '@/integrations/performative'
 defineProps<{ title: string; description: string; features: string[]; status?: string }>()
 </script>
 
 <template>
   <section class="unavailable-card">
+    <PerformativeIsland class="unavailable-glass-accent" :component="GlassCard" :component-props="{ glowOnHover: true, 'aria-hidden': true }" />
     <div class="unavailable-icon"><slot name="icon" /></div>
     <div class="unavailable-copy"><div class="unavailable-title"><strong>{{ title }}</strong><span>{{ status || '服务端能力待接入' }}</span></div><p>{{ description }}</p><div class="unavailable-tags"><span v-for="item in features" :key="item">{{ item }}</span></div></div>
   </section>

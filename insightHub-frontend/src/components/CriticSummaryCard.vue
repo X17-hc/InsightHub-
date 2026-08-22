@@ -3,6 +3,7 @@ import { computed, ref } from 'vue'
 import { AlertTriangle, CheckCircle2, ChevronDown, ChevronUp, SearchCheck, ShieldAlert } from '@lucide/vue'
 import type { CritiqueResult } from '@/types'
 import { criticVerdictMeta } from '@/utils/display'
+import { PerformativeIsland, WibblingSpinner } from '@/integrations/performative'
 
 const props = defineProps<{ critique: CritiqueResult | null; reviewing: boolean; supplementing: boolean; terminal: boolean }>()
 const expanded = ref(false)
@@ -19,8 +20,8 @@ const hasMore = computed(() => ((props.critique?.gaps.length || 0) + (props.crit
       <span class="critic-icon"><component :is="critique ? icon : SearchCheck" :size="18" /></span>
       <div><h2>质量评审</h2><p>Critic 检查证据覆盖、冲突与结论可信度。</p></div>
     </div>
-    <div v-if="reviewing" class="critic-pending"><span class="critic-pulse" /><div><strong>Critic 正在评审</strong><p>正在核对计划覆盖和已验证证据。</p></div></div>
-    <div v-else-if="supplementing" class="critic-pending warning"><span class="critic-pulse" /><div><strong>补充研究进行中</strong><p>评审发现证据缺口，Agent 正在补充检索。</p></div></div>
+    <div v-if="reviewing" class="critic-pending"><PerformativeIsland :component="WibblingSpinner" :component-props="{ verbs: ['评审中'], glyphColor: 'var(--pui-success)' }" /><div><strong>Critic 正在评审</strong><p>正在核对计划覆盖和已验证证据。</p></div></div>
+    <div v-else-if="supplementing" class="critic-pending warning"><PerformativeIsland :component="WibblingSpinner" :component-props="{ verbs: ['补充研究'], glyphColor: 'var(--pui-warning)' }" /><div><strong>补充研究进行中</strong><p>评审发现证据缺口，Agent 正在补充检索。</p></div></div>
     <div v-else-if="critique" class="critic-result">
       <div class="critic-verdict"><component :is="icon" :size="18" /><strong>{{ meta?.label }}</strong></div>
       <div v-if="critique.criticRound" class="critic-round">第 {{ critique.criticRound }} / {{ critique.maxCriticRounds || 2 }} 轮</div>

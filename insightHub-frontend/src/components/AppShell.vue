@@ -6,6 +6,7 @@ import message from 'ant-design-vue/es/message'
 import { BookOpen, FileSearch, LogOut, Menu, Plus, Settings, Users, X } from '@lucide/vue'
 import { useAuthStore } from '@/stores/auth'
 import { useWorkspaceStore } from '@/stores/workspace'
+import { PerformativeIsland, Sparkle, StatusDot } from '@/integrations/performative'
 
 const route = useRoute()
 const router = useRouter()
@@ -64,7 +65,7 @@ function logout() { auth.logout(); router.replace({ name: 'login' }) }
     <div v-if="mobileOpen" class="mobile-scrim" @click="mobileOpen = false" />
     <aside class="side-nav" :class="{ 'side-nav-open': mobileOpen }">
       <div class="brand-lockup">
-        <div class="brand-mark">I</div>
+        <div class="brand-mark">I</div><PerformativeIsland :component="Sparkle" class="brand-sparkle" :component-props="{ size: 12 }" />
         <div><strong>InsightHub</strong><span>研究工作台</span></div>
         <button class="icon-button nav-close" aria-label="关闭导航" @click="mobileOpen = false"><X :size="18" /></button>
       </div>
@@ -81,7 +82,7 @@ function logout() { auth.logout(); router.replace({ name: 'login' }) }
         </RouterLink>
       </nav>
       <div class="side-nav-footer">
-        <div class="trust-note"><span class="online-dot" /> 数据连接正常</div>
+        <div class="trust-note"><PerformativeIsland :component="StatusDot" :component-props="{ color: 'var(--pui-success)' }" /> 数据连接正常</div>
         <div class="user-block"><div class="avatar">{{ initials }}</div><div class="user-copy"><strong>{{ displayName }}</strong><span>{{ auth.profile?.email || '工作空间成员' }}</span></div><button class="icon-button" aria-label="退出登录" title="退出登录" @click="logout"><LogOut :size="16" /></button></div>
       </div>
     </aside>
@@ -90,7 +91,7 @@ function logout() { auth.logout(); router.replace({ name: 'login' }) }
       <header class="top-bar">
         <button class="icon-button mobile-menu" aria-label="打开导航" @click="mobileOpen = true"><Menu :size="20" /></button>
         <div class="breadcrumbs"><span>InsightHub</span><span class="crumb-separator">/</span><strong>{{ workspace.current?.name || '工作空间' }}</strong></div>
-        <div class="top-bar-actions"><span class="connection-label"><span class="online-dot" /> 实时同步</span><button class="icon-button" aria-label="设置" title="设置" @click="router.push({ name: 'settings', params: { workspaceId } })"><Settings :size="17" /></button><div class="top-avatar">{{ initials }}</div></div>
+        <div class="top-bar-actions"><span class="connection-label"><PerformativeIsland :component="StatusDot" :component-props="{ color: 'var(--pui-success)' }" /> 实时同步</span><button class="icon-button" aria-label="设置" title="设置" @click="router.push({ name: 'settings', params: { workspaceId } })"><Settings :size="17" /></button><div class="top-avatar">{{ initials }}</div></div>
       </header>
       <div class="content-scroll"><slot /></div>
     </main>

@@ -1,9 +1,10 @@
 import { fileURLToPath, URL } from 'node:url'
+import react from '@vitejs/plugin-react'
 import vue from '@vitejs/plugin-vue'
 import { defineConfig } from 'vite'
 
 export default defineConfig({
-  plugins: [vue()],
+  plugins: [vue(), react()],
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),
@@ -18,11 +19,11 @@ export default defineConfig({
       },
     },
   },
-  // 本机 node_modules 存在重解析点：Node 可读、esbuild 原生读到乱码。
-  // 因此禁用依赖预构建，避免 Vite 启动/扫依赖时崩溃。
+  // 本机 node_modules 存在重解析点：全面 discovery 时 esbuild 易读到乱码。
+  // 仍需预构建 react/react-dom，否则浏览器无法从 CJS client.js 做 ESM 命名导入。
   optimizeDeps: {
     noDiscovery: true,
-    include: [],
+    include: ['react', 'react-dom', 'react/jsx-runtime', 'performative-ui'],
   },
   build: {
     target: 'esnext',

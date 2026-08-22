@@ -27,6 +27,8 @@
 .verification-badge { display: inline-flex; padding: 2px 5px; border-radius: 4px; color: #987630; background: #fbf2dc; font-size: 9px; }
 .verification-badge.verified { color: #39775f; background: #e8f3ed; }
 .report-content { min-height: 280px; }
+.streaming-indicator { display: flex; align-items: center; gap: 9px; margin: 0 0 12px; padding: 9px 12px; border: 1px solid #dcebe2; border-radius: 7px; color: #4f816d; background: #f5faf7; font-size: 11px; }
+.streaming-indicator > span:first-child { display: inline-flex; color: #4f816d; }
 
 @media (max-width: 1179px) and (min-width: 701px) {
   .detail-grid-week5 { grid-template-columns: minmax(0, 1.35fr) minmax(290px, .85fr); }
@@ -54,3 +56,19 @@
   .task-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .task-actions .ant-btn { justify-content: center; }
 }
+
+/* Performative surfaces across authentication, metrics, tables and agents */
+.auth-panel { position: relative; overflow: hidden; background: rgba(255,255,255,.86); border-color: rgba(218,233,224,.95); border-radius: 16px; box-shadow: 0 24px 70px rgba(43,79,61,.12), 0 0 0 6px rgba(111,130,196,.035); backdrop-filter: blur(18px); }
+.auth-panel::before { content: ''; position: absolute; width: 230px; height: 230px; right: -100px; top: -130px; border-radius: 50%; background: radial-gradient(circle, rgba(111,130,196,.16), transparent 67%); pointer-events: none; }
+.section-band { border: 1px solid var(--pui-panel-border); border-radius: 12px; background: rgba(255,255,255,.66); padding: 18px 16px; box-shadow: 0 12px 30px rgba(43,84,63,.045); backdrop-filter: blur(10px); }
+.metric-value { background: linear-gradient(110deg, #2d6e55, #6f82c4); background-clip: text; color: transparent; }
+.ant-table-wrapper { border-radius: 11px; box-shadow: 0 12px 30px rgba(43,84,63,.045); }
+.agent-item { background: var(--pui-panel); border-color: var(--pui-panel-border); border-radius: 11px; box-shadow: 0 12px 28px rgba(43,84,63,.055); transition: transform .22s ease, box-shadow .22s ease, border-color .22s ease; }
+.agent-item:hover { transform: translateY(-2px); border-color: rgba(79,155,121,.4); box-shadow: 0 18px 38px rgba(43,84,63,.1), 0 0 0 4px var(--pui-glow); }
+.plan-panel, .critic-card, .task-overview { position: relative; overflow: hidden; }
+.plan-panel::after, .critic-card::after, .task-overview::after { content: ''; position: absolute; inset: 0; pointer-events: none; background: linear-gradient(120deg, transparent 68%, rgba(111,130,196,.045)); }
+.unavailable-card { position: relative; overflow: hidden; border-radius: 10px !important; background: rgba(250,252,251,.88) !important; }
+.unavailable-glass-accent { position: absolute; inset: 0; pointer-events: none; opacity: .16; }
+.unavailable-card > :not(.unavailable-glass-accent) { position: relative; z-index: 1; }
+.citation-item { padding: 13px 10px; border: 1px solid transparent; border-radius: 8px; transition: background .2s ease, border-color .2s ease, transform .2s ease; }
+.citation-item:hover { background: rgba(255,255,255,.74); border-color: var(--pui-panel-border); transform: translateY(-1px); }
