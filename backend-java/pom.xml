@@ -124,6 +124,17 @@
     <build>
         <plugins>
             <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <useManifestOnlyJar>false</useManifestOnlyJar>
+                    <!-- This Windows host launches Maven/JDK from different drive roots.
+                         Surefire's forked JVM reports a launcher failure after all tests
+                         pass, so tests run in-process until the toolchain is colocated. -->
+                    <forkCount>0</forkCount>
+                </configuration>
+            </plugin>
+            <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
             </plugin>

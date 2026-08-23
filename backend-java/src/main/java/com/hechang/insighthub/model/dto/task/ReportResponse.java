@@ -19,6 +19,10 @@ public class ReportResponse {
     private String title;
     private String markdownContent;
     private String status;
+    private String qualityStatus;
+    private String qualitySummary;
+    private Integer verifiedCitationCount;
+    private Integer candidateCitationCount;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 }

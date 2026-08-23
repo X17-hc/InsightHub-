@@ -3,6 +3,7 @@ package com.hechang.insighthub.mapper;
 import java.util.List;
 
 import org.apache.ibatis.annotations.Param;
+import org.apache.ibatis.annotations.Delete;
 import org.apache.ibatis.annotations.Select;
 import org.apache.ibatis.annotations.Update;
 
@@ -32,6 +33,7 @@ public interface ResearchTaskMapper extends BaseMapper<ResearchTask> {
                    current_plan_revision_id AS currentPlanRevisionId,
                    plan_approved AS planApproved,
                    knowledge_base_ids AS knowledgeBaseIds,
+                   quality_status AS qualityStatus,
                    trace_id AS traceId,
                    current_run_id AS currentRunId
             FROM research_task
@@ -125,6 +127,10 @@ public interface ResearchTaskMapper extends BaseMapper<ResearchTask> {
             SET current_run_id = #{runId},
                 error_code = NULL,
                 error_message = NULL,
+                quality_status = 'PENDING',
+                quality_summary = NULL,
+                verified_citation_count = 0,
+                total_citation_count = 0,
                 completed_at = NULL,
                 updated_at = NOW()
             WHERE id = #{id} AND workspace_id = #{workspaceId}
@@ -133,6 +139,16 @@ public interface ResearchTaskMapper extends BaseMapper<ResearchTask> {
             @Param("id") String id,
             @Param("workspaceId") String workspaceId,
             @Param("runId") String runId);
+
+    @Update("""
+            UPDATE research_task
+            SET quality_status=#{qualityStatus}, quality_summary=#{qualitySummary},
+                verified_citation_count=#{verifiedCount}, total_citation_count=#{totalCount}, updated_at=NOW()
+            WHERE id=#{id} AND workspace_id=#{workspaceId}
+            """)
+    int updateQuality(@Param("id") String id, @Param("workspaceId") String workspaceId,
+            @Param("qualityStatus") String qualityStatus, @Param("qualitySummary") String qualitySummary,
+            @Param("verifiedCount") int verifiedCount, @Param("totalCount") int totalCount);
 
     /** Persist the current plan projection and task status atomically. */
     @Update("""
@@ -199,4 +215,12 @@ public interface ResearchTaskMapper extends BaseMapper<ResearchTask> {
     int failDispatchIfCurrentRun(@Param("id") String id, @Param("workspaceId") String workspaceId,
             @Param("runId") String runId, @Param("errorCode") String errorCode,
             @Param("errorMessage") String errorMessage);
+
+    /** 删除任务的图执行 Checkpoint 索引，必须先于任务主记录删除。 */
+    @Delete("DELETE FROM task_checkpoint WHERE task_id = #{taskId}")
+    int deleteCheckpointsByTaskId(@Param("taskId") String taskId);
+
+    /** 删除时再次限定工作空间，避免跨空间误删。 */
+    @Delete("DELETE FROM research_task WHERE id = #{taskId} AND workspace_id = #{workspaceId}")
+    int deleteByIdAndWorkspace(@Param("taskId") String taskId, @Param("workspaceId") String workspaceId);
 }

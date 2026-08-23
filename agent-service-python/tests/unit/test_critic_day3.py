@@ -99,7 +99,8 @@ def test_rule_verifier_marks_synthetic_and_duplicates() -> None:
         plan=None,
         completed_tasks=[],
     )
-    assert items[0].verified is True
+    assert items[0].verified is False
+    assert items[0].verification_status == "CANDIDATE"
     assert items[1].verified is False
     assert items[2].verified is False
     assert items[3].verified is False
@@ -220,8 +221,8 @@ def test_critic_supplement_then_terminal_fail(monkeypatch: pytest.MonkeyPatch) -
     assert critique_events[1].data.get("verdict") != "SUPPLEMENT"
 
 
-def test_pass_path_emits_critic_without_supplement() -> None:
-    """mock 下 SYNTHETIC 可验证 → PASS，不进入补充。"""
+def test_synthetic_demo_never_passes_quality_gate() -> None:
+    """演示合成数据可完成流程，但永远不能通过质量门。"""
     request = AgentTaskRequest.model_validate(
         {
             "taskId": "task-critic-pass",
@@ -241,8 +242,11 @@ def test_pass_path_emits_critic_without_supplement() -> None:
     types = {e.type for e in result.events}
     assert "CRITIC_STARTED" in types
     assert "CRITIQUE_COMPLETED" in types
-    assert "SUPPLEMENT_RESEARCH_REQUESTED" not in types
-    assert any(c.get("verified") for c in result.citations)
+    assert "SUPPLEMENT_RESEARCH_REQUESTED" in types
+    critique_events = [e for e in result.events if e.type == "CRITIQUE_COMPLETED"]
+    assert critique_events[-1].data["verdict"] == "FAIL"
+    assert all(not c.get("verified") for c in result.citations)
+    assert all(c.get("verificationStatus") == "SYNTHETIC" for c in result.citations)
 
 
 def test_route_after_critic_helpers() -> None:
@@ -311,8 +315,8 @@ def test_merge_and_supplement_nodes_unit() -> None:
         "knowledge_base_ids": [],
     }
     merged = merge_evidence(state)  # type: ignore[arg-type]
-    assert merged["verified_evidence_ids"]
-    assert merged["evidence"][0]["verified"] is True
+    assert merged["verified_evidence_ids"] == []
+    assert merged["evidence"][0]["verified"] is False
 
     supplemented = supplement_research(state)  # type: ignore[arg-type]
     # 无 KB 时丢弃 knowledge_research，仅保留 web

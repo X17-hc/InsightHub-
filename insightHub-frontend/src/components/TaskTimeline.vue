@@ -1,14 +1,23 @@
 <script setup lang="ts">
+import { computed, ref } from 'vue'
 import { FileText } from '@lucide/vue'
 import type { TaskEvent } from '@/types'
 import { formatDate } from '@/utils/display'
 
-defineProps<{ events: TaskEvent[]; terminal: boolean }>()
+const props = defineProps<{ events: TaskEvent[]; terminal: boolean }>()
+const filter = ref<'all' | 'warnings' | 'tools'>('all')
 const title = (event: TaskEvent) => ({
   TASK_STARTED: '任务开始执行',
   PLAN_CREATED: '研究计划已生成',
   APPROVAL_REQUIRED: '等待计划确认',
   PLAN_REVISED: '已提交计划修订',
+  PLAN_APPROVED: '研究计划已批准',
+  PLAN_TASK_STARTED: '计划节点开始',
+  PLAN_TASK_COMPLETED: '计划节点完成',
+  PLAN_TASK_FAILED: '计划节点失败',
+  PLAN_TASK_SKIPPED: '计划节点跳过',
+  WEB_SEARCH_FAILED: '真实网络检索失败',
+  SOURCE_FETCH_FAILED: '候选网页抓取失败',
   NODE_STARTED: `${event.node || '研究节点'} 开始`,
   NODE_COMPLETED: `${event.node || '研究节点'} 完成`,
   TOOL_CALLED: '调用研究工具',
@@ -43,11 +52,26 @@ const detail = (event: TaskEvent) => {
 
 const tone = (event: TaskEvent) => ({
   done: ['NODE_COMPLETED', 'TASK_COMPLETED', 'TASK_RESULT', 'SANDBOX_COMPLETED'].includes(event.type),
-  failed: ['TASK_FAILED', 'SANDBOX_FAILED'].includes(event.type),
-  warning: ['APPROVAL_REQUIRED', 'SUPPLEMENT_RESEARCH_REQUESTED'].includes(event.type),
+  failed: ['TASK_FAILED', 'SANDBOX_FAILED', 'WEB_SEARCH_FAILED', 'PLAN_TASK_FAILED'].includes(event.type),
+  warning: ['APPROVAL_REQUIRED', 'SUPPLEMENT_RESEARCH_REQUESTED', 'PLAN_TASK_SKIPPED', 'SOURCE_FETCH_FAILED'].includes(event.type),
+})
+
+const warningTypes = new Set(['TASK_FAILED', 'SANDBOX_FAILED', 'WEB_SEARCH_FAILED', 'SOURCE_FETCH_FAILED', 'PLAN_TASK_FAILED', 'PLAN_TASK_SKIPPED', 'APPROVAL_REQUIRED', 'SUPPLEMENT_RESEARCH_REQUESTED'])
+const toolTypes = new Set(['TOOL_CALLED', 'TOOL_COMPLETED'])
+const stage = (event: TaskEvent) => {
+  if (/PLAN|APPROVAL/.test(event.type)) return '计划与审批'
+  if (/SEARCH|TOOL|EVIDENCE/.test(event.type) || ['knowledge_research', 'web_research', 'merge_evidence'].includes(event.node || '')) return '证据检索'
+  if (/CRITIC|CRITIQUE|SUPPLEMENT/.test(event.type)) return '质量评审'
+  return '报告与产物'
+}
+const groups = computed(() => {
+  const selected = props.events.filter((event) => filter.value === 'all' || (filter.value === 'warnings' ? warningTypes.has(event.type) : toolTypes.has(event.type)))
+  return ['计划与审批', '证据检索', '质量评审', '报告与产物'].map((name) => ({ name, events: selected.filter((event) => stage(event) === name) })).filter((group) => group.events.length)
 })
 </script>
 <template>
-  <div v-if="events.length" class="timeline"><div v-for="event in events" :key="`${event.eventId}-${event.type}`" class="timeline-item"><div class="timeline-dot" :class="tone(event)"/><div class="timeline-body"><div class="timeline-heading"><strong>{{ title(event) }}</strong><span>#{{ event.eventId || '—' }}</span></div><div class="timeline-meta">{{ event.node || '系统' }} · {{ formatDate(event.timestamp) }}</div><p v-if="detail(event)" class="timeline-message">{{ detail(event) }}</p></div></div></div>
+  <div v-if="events.length"><a-radio-group v-model:value="filter" size="small" style="margin-bottom:12px"><a-radio-button value="all">全部</a-radio-button><a-radio-button value="warnings">警告与失败</a-radio-button><a-radio-button value="tools">工具调用</a-radio-button></a-radio-group><div v-if="groups.length"><details v-for="group in groups" :key="group.name" :open="group.name !== '证据检索'" class="timeline-group"><summary>{{ group.name }}（{{ group.events.length }}）</summary><div class="timeline"><div v-for="event in group.events" :key="`${event.eventId}-${event.type}`" class="timeline-item"><div class="timeline-dot" :class="tone(event)"/><div class="timeline-body"><div class="timeline-heading"><strong>{{ title(event) }}</strong><span>#{{ event.eventId || '—' }}</span></div><div class="timeline-meta">{{ event.node || '系统' }} · {{ formatDate(event.timestamp) }}</div><p v-if="detail(event)" class="timeline-message">{{ detail(event) }}</p></div></div></div></details></div><div v-else class="empty-state activity-empty"><p>当前筛选条件下没有事件。</p></div></div>
   <div v-else class="empty-state activity-empty"><FileText :size="28"/><h3>{{ terminal ? '暂无执行事件' : '等待执行动态' }}</h3><p>{{ terminal ? '该任务未落库任何事件，或执行过程中未成功写入。' : '任务开始后，节点和工具事件会显示在这里。' }}</p></div>
 </template>
+
+<style scoped>.timeline-group { margin-bottom: 10px; }.timeline-group > summary { cursor: pointer; margin-bottom: 8px; color: #506d5e; font-size: 12px; font-weight: 700; }</style>

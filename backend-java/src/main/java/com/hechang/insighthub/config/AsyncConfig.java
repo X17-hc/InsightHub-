@@ -1,6 +1,8 @@
 package com.hechang.insighthub.config;
 
 import java.util.concurrent.Executor;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadPoolExecutor;
 
 import org.springframework.context.annotation.Bean;
@@ -9,20 +11,37 @@ import org.springframework.scheduling.annotation.EnableAsync;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 
 /**
- * 异步任务执行线程池（Agent 流式消费）。
+ * Explicit bulkheads for work with materially different execution times.
  */
 @Configuration
 @EnableAsync
 public class AsyncConfig {
 
-    @Bean(name = "taskExecutor")
-    public Executor taskExecutor() {
+    @Bean(name = "agentStreamExecutor")
+    public Executor agentStreamExecutor() {
+        return executor("ih-agent-stream-", 4, 16, 32);
+    }
+
+    @Bean(name = "knowledgeIngestExecutor")
+    public Executor knowledgeIngestExecutor() {
+        return executor("ih-knowledge-ingest-", 2, 4, 64);
+    }
+
+    @Bean(destroyMethod = "shutdown")
+    public ScheduledExecutorService sseScheduler() {
+        return Executors.newScheduledThreadPool(4, runnable -> {
+            Thread thread = new Thread(runnable, "ih-sse-");
+            thread.setDaemon(true);
+            return thread;
+        });
+    }
+
+    private static ThreadPoolTaskExecutor executor(String threadNamePrefix, int coreSize, int maxSize, int queueCapacity) {
         ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
-        executor.setCorePoolSize(4);
-        executor.setMaxPoolSize(16);
-        executor.setQueueCapacity(200);
-        executor.setThreadNamePrefix("ih-task-");
-        // 由调用方捕获拒绝并标记任务 FAILED
+        executor.setCorePoolSize(coreSize);
+        executor.setMaxPoolSize(maxSize);
+        executor.setQueueCapacity(queueCapacity);
+        executor.setThreadNamePrefix(threadNamePrefix);
         executor.setRejectedExecutionHandler(new ThreadPoolExecutor.AbortPolicy());
         executor.initialize();
         return executor;

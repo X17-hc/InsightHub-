@@ -39,6 +39,9 @@ public class TaskPlanRevision {
     @Column("approved_by")
     private String approvedBy;
 
+    @Column("approval_remark")
+    private String approvalRemark;
+
     @Column("created_at")
     private LocalDateTime createdAt;
 

@@ -26,6 +26,12 @@ public interface ResearchTaskService extends IService<ResearchTask> {
     /** 任务详情 */
     TaskSummaryResponse get(String workspaceId, String taskId);
 
+    /**
+     * 删除已结束任务及其报告、引用、事件、计划修订和派发记录。
+     * 仅任务创建者或工作空间管理员可执行；运行中的任务必须先取消并结束。
+     */
+    void delete(String workspaceId, String taskId);
+
     /** Latest generated report for a task. */
     ReportResponse getReport(String workspaceId, String taskId);
 
@@ -35,6 +41,8 @@ public interface ResearchTaskService extends IService<ResearchTask> {
 
     /** 任务引用列表（可追溯来源） */
     List<CitationResponse> listCitations(String workspaceId, String taskId);
+
+    List<CitationResponse> listCitations(String workspaceId, String taskId, int version);
 
     /**
      * 历史事件列表（详情页首屏灌入；SSE 用 fromEventNo 续传）。

@@ -67,6 +67,7 @@ def response_from_state(
         reportMarkdown=report,
         events=events,
         citations=list(state.get("citations") or []),
+        quality=state.get("quality"),
         error=None,
     )
 

@@ -168,6 +168,7 @@ def _enforce_verdict_invariants(
     evidence: list[dict[str, Any]],
     can_supplement: bool,
     has_kb: bool,
+    plan: dict[str, Any] | None = None,
 ) -> CritiqueResult:
     """
     硬约束：无 verified 证据时禁止 PASS；可补充时改为 SUPPLEMENT，否则 FAIL。
@@ -175,6 +176,7 @@ def _enforce_verdict_invariants(
     同时清洗无 KB 时的 knowledge_research 补充任务。
     """
     verified = [e for e in evidence if e.get("verified")]
+    minimum_sources = max(3, int(((plan or {}).get("sourceRequirements") or {}).get("minVerifiedSources") or 3))
     tasks = list(result.supplement_tasks)
     if not has_kb:
         tasks = [t for t in tasks if t.type != "knowledge_research"]
@@ -184,12 +186,12 @@ def _enforce_verdict_invariants(
     limitations = list(result.limitations)
     summary = result.summary
 
-    if verdict == "PASS" and not verified:
+    if verdict == "PASS" and len(verified) < minimum_sources:
         if can_supplement:
             verdict = "SUPPLEMENT"
-            summary = summary or "缺少已验证证据，请求补充研究。"
+            summary = summary or "已核验来源未达到计划要求，请求补充研究。"
             if "unverified_evidence" not in gaps and "missing_evidence" not in gaps:
-                gaps.append("unverified_evidence" if evidence else "missing_evidence")
+                gaps.append("insufficient_verified_sources" if verified else ("unverified_evidence" if evidence else "missing_evidence"))
             if not tasks:
                 tasks = list(
                     _default_supplement_tasks(
@@ -199,9 +201,9 @@ def _enforce_verdict_invariants(
                 )
         else:
             verdict = "FAIL"
-            summary = summary or "缺少已验证证据，无法通过评审。"
+            summary = summary or "已核验来源未达到计划要求，无法通过评审。"
             if "unverified_evidence" not in gaps and "missing_evidence" not in gaps:
-                gaps.append("unverified_evidence" if evidence else "missing_evidence")
+                gaps.append("insufficient_verified_sources" if verified else ("unverified_evidence" if evidence else "missing_evidence"))
             limitations = list(
                 dict.fromkeys(
                     limitations
@@ -263,7 +265,7 @@ def critic_review(state: ResearchState) -> dict[str, Any]:
     )
     delta.append(started)
 
-    if settings.agent_mock_llm or not settings.deepseek_api_key:
+    if settings.synthetic_allowed():
         critique = _mock_critique(
             evidence=evidence,
             completed_tasks=completed,
@@ -272,6 +274,8 @@ def critic_review(state: ResearchState) -> dict[str, Any]:
             has_kb=has_kb,
         )
     else:
+        if not settings.deepseek_api_key.strip():
+            raise RuntimeError("LLM_NOT_CONFIGURED")
         model = get_chat_model(temperature=0.1, timeout_seconds=remaining_seconds(state, 60))
         payload = {
             "query": state.get("clarified_query") or state.get("user_query"),
@@ -290,14 +294,8 @@ def critic_review(state: ResearchState) -> dict[str, Any]:
                 ]
             )
             critique = CritiqueResult.model_validate(_extract_json(str(resp.content)))
-        except Exception:  # noqa: BLE001 - 结构化失败降级 FAIL
-            critique = CritiqueResult(
-                verdict="FAIL",
-                summary="Critic 输出无法解析，按失败收尾。",
-                gaps=("critic_parse_error",),
-                limitations=("自动评审失败，报告需人工复核",),
-                supplementTasks=(),
-            )
+        except Exception as exc:  # noqa: BLE001 - 协议/模型故障必须终止，禁止伪造质量结论
+            raise RuntimeError("CRITIC_RESPONSE_INVALID") from exc
 
     if not can_supplement:
         critique = _force_terminal_verdict(critique)
@@ -306,6 +304,7 @@ def critic_review(state: ResearchState) -> dict[str, Any]:
         evidence=evidence,
         can_supplement=can_supplement,
         has_kb=has_kb,
+        plan=plan,
     )
 
     new_round = prior_round + 1
@@ -319,7 +318,10 @@ def critic_review(state: ResearchState) -> dict[str, Any]:
             "verdict": critique.verdict,
             "criticRound": new_round,
             "gapCount": len(critique.gaps),
+            "summary": critique.summary,
+            "gaps": list(critique.gaps),
             "limitations": list(critique.limitations),
+            "maxCriticRounds": max_rounds,
             "supplementTaskCount": len(critique.supplement_tasks),
         },
     )

@@ -20,8 +20,8 @@ from app.schemas.protocol import Plan
 _PLANNER_SYSTEM = """你是 InsightHub Planner。只输出 JSON，不调用工具，不输出结论。
 格式：{"title":"...","objective":"...","tasks":[
 {"id":"task-1","type":"web_research|knowledge_research","description":"...","dependsOn":[]}
-]}
-任务至少 1 个、最多 3 个；绑定知识库时至少包含一个 knowledge_research。"""
+],"researchDimensions":["..."],"sourceRequirements":{"minVerifiedSources":3,"requireOfficialSources":true}}
+新计划至少 2 个、最多 8 个任务；复杂主题必须拆分为独立取证维度；dependsOn 必须构成无环图；绑定知识库时至少包含一个 knowledge_research。"""
 
 
 def _extract_json(text: str) -> dict[str, Any]:
@@ -100,9 +100,11 @@ def create_plan(state: ResearchState) -> dict[str, Any]:
 
     has_kb = bool(state.get("knowledge_base_ids"))
 
-    if settings.agent_mock_llm or not settings.deepseek_api_key:
+    if settings.synthetic_allowed():
         plan = _mock_plan(state["user_query"], has_kb=has_kb)
     else:
+        if not settings.deepseek_api_key.strip():
+            raise RuntimeError("LLM_NOT_CONFIGURED")
         hint = "\n已绑定知识库" if has_kb else "\n未绑定知识库"
         response = get_chat_model(temperature=0.1,
                                   timeout_seconds=remaining_seconds(state, 60)).invoke([
@@ -112,6 +114,7 @@ def create_plan(state: ResearchState) -> dict[str, Any]:
                                   if state.get("revision_instruction") else "")),
         ])
         plan = Plan.model_validate(_extract_json(str(response.content)))
+        _validate_new_plan(plan, has_kb=has_kb)
 
     digest = plan_hash(plan)
     plan_dict = plan.model_dump(by_alias=True)
@@ -142,3 +145,15 @@ def create_plan(state: ResearchState) -> dict[str, Any]:
             "clarified_query": plan.objective,
             "step_count": step,
             "events": events[len(state.get("events") or []):]}
+
+
+def _validate_new_plan(plan: Plan, *, has_kb: bool) -> None:
+    """Validate new LLM plans without breaking parsing of immutable historical plans."""
+    if not 2 <= len(plan.tasks) <= 8:
+        raise ValueError("new plan must contain between two and eight tasks")
+    if len(plan.research_dimensions) < 2:
+        raise ValueError("new plan must declare at least two research dimensions")
+    if not has_kb and all(task.type == "knowledge_research" for task in plan.tasks):
+        raise ValueError("knowledge-only plan requires a bound knowledge base")
+    if any(len(task.description.strip()) < 12 for task in plan.tasks):
+        raise ValueError("plan task must contain a concrete evidence objective")

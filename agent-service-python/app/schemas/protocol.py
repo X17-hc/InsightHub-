@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class StrictModel(BaseModel):
@@ -40,10 +40,17 @@ class PlanTask(StrictModel):
     depends_on: tuple[str, ...] = Field(default=(), alias="dependsOn")
 
 
+class SourceRequirements(StrictModel):
+    min_verified_sources: int = Field(default=3, ge=3, le=20, alias="minVerifiedSources")
+    require_official_sources: bool = Field(default=True, alias="requireOfficialSources")
+
+
 class Plan(StrictModel):
     title: str = Field(min_length=1, max_length=256)
     objective: str = Field(min_length=1, max_length=4000)
-    tasks: tuple[PlanTask, ...] = Field(min_length=1, max_length=3)
+    research_dimensions: tuple[str, ...] = Field(default=(), alias="researchDimensions", max_length=8)
+    source_requirements: SourceRequirements = Field(default_factory=SourceRequirements, alias="sourceRequirements")
+    tasks: tuple[PlanTask, ...] = Field(min_length=1, max_length=8)
 
     @field_validator("tasks")
     @classmethod
@@ -53,6 +60,34 @@ class Plan(StrictModel):
             raise ValueError("plan task ids must be unique")
         return value
 
+    @model_validator(mode="after")
+    def validate_dag(self) -> "Plan":
+        ids = {task.id for task in self.tasks}
+        graph = {task.id: set(task.depends_on) for task in self.tasks}
+        for task_id, dependencies in graph.items():
+            if task_id in dependencies:
+                raise ValueError("plan task cannot depend on itself")
+            missing = dependencies - ids
+            if missing:
+                raise ValueError(f"plan task references missing dependencies: {sorted(missing)}")
+        visiting: set[str] = set()
+        visited: set[str] = set()
+
+        def visit(task_id: str) -> None:
+            if task_id in visiting:
+                raise ValueError("plan dependency graph contains a cycle")
+            if task_id in visited:
+                return
+            visiting.add(task_id)
+            for dependency in graph[task_id]:
+                visit(dependency)
+            visiting.remove(task_id)
+            visited.add(task_id)
+
+        for task_id in graph:
+            visit(task_id)
+        return self
+
 
 class Evidence(StrictModel):
     """研究证据快照（不可变契约）。"""
@@ -60,11 +95,18 @@ class Evidence(StrictModel):
     id: str = Field(min_length=1, max_length=128)
     source_title: str = Field(alias="sourceTitle", min_length=1, max_length=512)
     source_uri: str = Field(default="", alias="sourceUri", max_length=2048)
+    canonical_uri: str | None = Field(default=None, alias="canonicalUri", max_length=2048)
+    final_uri: str | None = Field(default=None, alias="finalUri", max_length=2048)
     quoted_text: str = Field(default="", alias="quotedText", max_length=8000)
     source_type: str = Field(default="WEB", alias="sourceType", max_length=32)
     document_id: str | None = Field(default=None, alias="documentId")
     chunk_id: str | None = Field(default=None, alias="chunkId")
     verified: bool = False
+    verification_status: Literal["VERIFIED", "CANDIDATE", "SYNTHETIC"] = Field(default="CANDIDATE", alias="verificationStatus")
+    verification_reason: str | None = Field(default=None, alias="verificationReason", max_length=512)
+    retrieved_at: str | None = Field(default=None, alias="retrievedAt")
+    content_hash: str | None = Field(default=None, alias="contentHash", max_length=64)
+    http_status: int | None = Field(default=None, alias="httpStatus", ge=100, le=599)
 
 
 class SupplementTask(StrictModel):
@@ -162,6 +204,7 @@ class AgentTaskResponse(BaseModel):
     report_markdown: str | None = Field(default=None, alias="reportMarkdown")
     events: tuple[AgentEvent, ...] = ()
     citations: tuple[dict[str, Any], ...] = ()
+    quality: dict[str, Any] | None = None
     error: AgentError | None = None
 
 

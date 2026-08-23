@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+import hashlib
 from typing import Any
 
 from app.graph.events import make_event
@@ -82,16 +84,24 @@ def knowledge_research(state: ResearchState) -> dict[str, Any]:
         )
         evidence: list[dict[str, Any]] = []
         for idx, item in enumerate(raw, start=1):
+            snippet = str(item.get("snippet") or "").strip()
+            document_id = str(item.get("documentId") or "").strip()
+            chunk_id = str(item.get("chunkId") or "").strip()
+            verified = bool(document_id and chunk_id and len(snippet) >= 20)
             evidence.append(
                 {
                     "id": f"ev-kb-{sub.get('id', 'x')}-{idx}",
                     "sourceTitle": item.get("title") or "Knowledge chunk",
                     "sourceUri": item.get("url") or "",
-                    "quotedText": item.get("snippet") or "",
+                    "quotedText": snippet,
                     "sourceType": "KNOWLEDGE",
-                    "documentId": item.get("documentId"),
-                    "chunkId": item.get("chunkId"),
-                    "verified": False,
+                    "documentId": document_id or None,
+                    "chunkId": chunk_id or None,
+                    "verified": verified,
+                    "verificationStatus": "VERIFIED" if verified else "CANDIDATE",
+                    "verificationReason": "KNOWLEDGE_CHUNK_RETRIEVED" if verified else "KNOWLEDGE_IDENTITY_INCOMPLETE",
+                    "retrievedAt": datetime.now(UTC).isoformat(),
+                    "contentHash": hashlib.sha256(snippet.encode("utf-8")).hexdigest() if snippet else None,
                 }
             )
         delta.append(
@@ -114,7 +124,7 @@ def knowledge_research(state: ResearchState) -> dict[str, Any]:
             run_id=run_id,
             event_type="NODE_COMPLETED",
             node="knowledge_research",
-            data={"agent": "KnowledgeResearcher", "sourceCount": len(all_evidence)},
+            data={"agent": "KnowledgeResearcher", "addedSourceCount": len(all_evidence) - len(state.get("evidence") or []), "totalSourceCount": len(all_evidence)},
         )
     )
 

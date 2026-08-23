@@ -9,11 +9,16 @@ User=insighthub
 Group=insighthub
 WorkingDirectory=/opt/insighthub/agent
 EnvironmentFile=/etc/insighthub/agent.env
+ExecStartPre=/usr/bin/test -r /etc/insighthub/agent.env
+ExecCondition=/bin/bash /opt/insighthub/agent/deploy/ubuntu/check-agent-env.sh
+ExecStartPre=/usr/bin/docker image inspect --format {{.Id}} insighthub-analysis-sandbox:1.0.0
 ExecStart=/opt/insighthub/agent/.venv/bin/uvicorn app.main:app --app-dir /opt/insighthub/agent/agent-service-python --host 0.0.0.0 --port 8000
 Restart=on-failure
 RestartSec=5
+UMask=0027
 NoNewPrivileges=true
 PrivateTmp=true
+ProtectHome=true
 ProtectSystem=strict
 ReadWritePaths=/opt/insighthub/artifacts /opt/insighthub/agent
 

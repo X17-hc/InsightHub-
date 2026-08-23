@@ -1,6 +1,5 @@
 package com.hechang.insighthub.service.impl;
 
-import jakarta.annotation.Resource;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -9,12 +8,14 @@ import org.springframework.transaction.event.TransactionPhase;
 import org.springframework.transaction.event.TransactionalEventListener;
 import org.springframework.transaction.support.TransactionTemplate;
 import com.hechang.insighthub.mapper.TaskDispatchOutboxMapper;
+import lombok.RequiredArgsConstructor;
 
 @Component
+@RequiredArgsConstructor
 public class TaskDispatchWorker {
-    @Resource private TaskDispatchOutboxMapper mapper;
-    @Resource private TransactionTemplate transactionTemplate;
-    @Resource private TaskDispatchExecutor dispatchExecutor;
+    private final TaskDispatchOutboxMapper mapper;
+    private final TransactionTemplate transactionTemplate;
+    private final TaskDispatchExecutor dispatchExecutor;
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     public void afterCommit(TaskDispatchRequested event) { inTransaction(event.outboxId()); }

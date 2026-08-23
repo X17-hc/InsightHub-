@@ -138,17 +138,33 @@ def _build_citations(evidence: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """
     verified, unverified = _split_evidence(evidence)
     citations: list[dict[str, Any]] = []
-    for i, ev in enumerate(verified + unverified, start=1):
+    unique: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for ev in verified + unverified:
+        key = str(ev.get("canonicalUri") or ev.get("sourceUri") or ev.get("id") or "").strip().lower()
+        if key and key in seen:
+            continue
+        if key:
+            seen.add(key)
+        unique.append(ev)
+    for i, ev in enumerate(unique, start=1):
         citations.append(
             {
                 "citationNo": i,
                 "sourceTitle": ev.get("sourceTitle"),
                 "sourceUri": ev.get("sourceUri"),
+                "canonicalUri": ev.get("canonicalUri"),
+                "finalUri": ev.get("finalUri"),
                 "sourceType": ev.get("sourceType") or "WEB",
                 "documentId": ev.get("documentId"),
                 "chunkId": ev.get("chunkId"),
                 "quotedText": ev.get("quotedText"),
                 "verified": bool(ev.get("verified")),
+                "verificationStatus": ev.get("verificationStatus") or ("VERIFIED" if ev.get("verified") else "CANDIDATE"),
+                "verificationReason": ev.get("verificationReason"),
+                "retrievedAt": ev.get("retrievedAt"),
+                "contentHash": ev.get("contentHash"),
+                "httpStatus": ev.get("httpStatus"),
             }
         )
     return citations
@@ -222,7 +238,7 @@ def write_report(state: ResearchState) -> dict[str, Any]:
     verified, unverified = _split_evidence(all_evidence)
     limitations = _critique_limitations(state)
 
-    if settings.agent_mock_llm or not settings.deepseek_api_key:
+    if settings.synthetic_allowed():
         report = _render_fallback(state)
         delta.extend(
             _report_delta_events(
@@ -233,6 +249,8 @@ def write_report(state: ResearchState) -> dict[str, Any]:
             )
         )
     else:
+        if not settings.deepseek_api_key.strip():
+            raise RuntimeError("LLM_NOT_CONFIGURED")
         model = get_chat_model(temperature=0.3, timeout_seconds=remaining_seconds(state, 60))
         # 结论上下文只传 verified；未验证仅作限制提示，降低模型误用概率
         payload = {
@@ -344,6 +362,21 @@ def finalize(state: ResearchState) -> dict[str, Any]:
     if state.get("status") == "FAILED":
         return {}
     events = list(state.get("events") or [])
+    critique = state.get("critique") or {}
+    citations = list(state.get("citations") or [])
+    verified_count = sum(1 for item in citations if item.get("verificationStatus") == "VERIFIED" or item.get("verified"))
+    candidate_count = sum(1 for item in citations if item.get("verificationStatus") == "CANDIDATE")
+    quality = {
+        "verdict": critique.get("verdict") or "NOT_EVALUATED",
+        "summary": critique.get("summary") or "",
+        "gaps": list(critique.get("gaps") or []),
+        "limitations": list(critique.get("limitations") or []),
+        "criticRound": int(state.get("critic_round") or 0),
+        "maxCriticRounds": int(state.get("max_critic_rounds") or 0),
+        "verifiedCitationCount": verified_count,
+        "candidateCitationCount": candidate_count,
+        "totalCitationCount": len(citations),
+    }
     delta = [
         make_event(
             events=events,
@@ -354,7 +387,8 @@ def finalize(state: ResearchState) -> dict[str, Any]:
             data={
                 "hasReport": bool(state.get("report")),
                 "citationCount": len(state.get("citations") or []),
+                "quality": quality,
             },
         )
     ]
-    return {"status": "COMPLETED", "events": delta}
+    return {"status": "COMPLETED", "quality": quality, "events": delta}

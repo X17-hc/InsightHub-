@@ -46,8 +46,7 @@ def test_max_steps_stops_before_research_and_writer():
     assert result.error is not None
     assert result.error.code == "MAX_STEPS_EXCEEDED"
     assert result.report_markdown is None
-    assert all(event.node not in {"web_research", "merge_evidence", "critic_review", "write_report"}
-               for event in result.events)
+    assert all(event.node not in {"critic_review", "write_report"} for event in result.events)
 
 
 def test_max_steps_is_enforced_after_supervisor():
@@ -67,6 +66,5 @@ def test_max_steps_is_enforced_after_supervisor():
     assert result.error is not None
     assert result.error.code == "MAX_STEPS_EXCEEDED"
     assert result.report_markdown is None
-    assert any(event.node == "knowledge_research" for event in result.events)
-    assert all(event.node not in {"web_research", "merge_evidence", "critic_review", "write_report"}
-               for event in result.events)
+    assert any(event.node in {"knowledge_research", "execute_plan"} for event in result.events)
+    assert all(event.node not in {"critic_review", "write_report"} for event in result.events)

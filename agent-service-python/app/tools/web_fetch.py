@@ -6,6 +6,8 @@ import logging
 import ipaddress
 import re
 import socket
+import hashlib
+from datetime import datetime, timezone
 from html import unescape
 from typing import Any
 from urllib.parse import urljoin, urlparse, urlunparse
@@ -123,6 +125,7 @@ def fetch_url(url: str, timeout_seconds: float = _TIMEOUT) -> dict[str, Any] | N
             raise TimeoutError("agent task timed out")
         current_url = url
         html = ""
+        http_status = 0
         with httpx.Client(timeout=timeout_seconds, follow_redirects=False, trust_env=False) as client:
             for redirect_count in range(_MAX_REDIRECTS + 1):
                 prepared = _prepare_public_request(current_url)
@@ -143,6 +146,7 @@ def fetch_url(url: str, timeout_seconds: float = _TIMEOUT) -> dict[str, Any] | N
                         continue
                     if resp.status_code >= 400:
                         return None
+                    http_status = resp.status_code
                     ctype = (resp.headers.get("content-type") or "").lower()
                     if "html" not in ctype and "text" not in ctype:
                         return None
@@ -167,10 +171,17 @@ def fetch_url(url: str, timeout_seconds: float = _TIMEOUT) -> dict[str, Any] | N
         body = _strip_html(html)
         if len(body) < 40:
             return None
+        content_hash = hashlib.sha256(body.encode("utf-8")).hexdigest()
         return {
             "title": title[:200],
-            "url": current_url,
+            "url": url,
+            "finalUrl": current_url,
             "snippet": body[:600],
+            "retrievedAt": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+            "contentHash": content_hash,
+            "httpStatus": http_status,
+            "verificationStatus": "VERIFIED",
+            "verificationReason": "page fetched and excerpt extracted from response body",
             "sourceType": "WEB",
         }
     except Exception as exc:  # noqa: BLE001

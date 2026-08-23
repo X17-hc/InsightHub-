@@ -42,6 +42,7 @@ public class AgentStreamClient {
     private final WebClient agentWebClient;
     private final ObjectMapper objectMapper;
     private final AgentProperties agentProperties;
+    private final AgentTaskRequestFactory requestFactory;
 
     /**
      * 启动流式任务并逐行回调 JSON 节点。
@@ -61,7 +62,7 @@ public class AgentStreamClient {
             List<String> knowledgeBaseIds,
             boolean enableDataAnalysis,
             Consumer<JsonNode> onLine) {
-        Map<String, Object> body = buildBody(
+        Map<String, Object> body = requestFactory.forStreamTask(
                 taskId, workspaceId, userId, query, timeoutSec, nextEventId, knowledgeBaseIds, enableDataAnalysis);
         String key = idempotencyKey == null || idempotencyKey.isBlank()
                 ? taskId + "-stream-1"
@@ -120,7 +121,7 @@ public class AgentStreamClient {
 
     public void streamTask(TaskDispatchCommand command, int timeoutSec, Long nextEventId,
                            Consumer<JsonNode> onLine) {
-        Map<String, Object> body = buildBody(command, timeoutSec, nextEventId);
+        Map<String, Object> body = requestFactory.forDispatchCommand(command, timeoutSec, nextEventId);
         consumeNdjson(clientForTimeout(timeoutSec).post().uri("/internal/v1/agent/tasks/stream")
                 .contentType(MediaType.APPLICATION_JSON).accept(MediaType.parseMediaType("application/x-ndjson"))
                 .header("X-Trace-Id", command.traceId())
@@ -221,46 +222,4 @@ public class AgentStreamClient {
         return -1;
     }
 
-    private static Map<String, Object> buildBody(
-            String taskId,
-            String workspaceId,
-            String userId,
-            String query,
-            int timeoutSec,
-            Long nextEventId,
-            List<String> knowledgeBaseIds,
-            boolean enableDataAnalysis) {
-        Map<String, Object> config = new HashMap<>();
-        config.put("maxSteps", 20);
-        config.put("maxParallelism", 3);
-        config.put("requirePlanApproval", true);
-        config.put("enableWebSearch", true);
-        config.put("maxCriticRounds", 2);
-        config.put("enableDataAnalysis", enableDataAnalysis);
-        config.put("timeoutSeconds", timeoutSec);
-        if (nextEventId != null && nextEventId > 1) {
-            config.put("nextEventId", nextEventId);
-        }
-
-        Map<String, Object> body = new HashMap<>();
-        body.put("taskId", taskId);
-        body.put("workspaceId", workspaceId);
-        body.put("userId", userId);
-        body.put("query", query);
-        body.put("phase", "PLAN");
-        body.put("planRevision", 1);
-        body.put("knowledgeBaseIds", knowledgeBaseIds == null ? List.of() : knowledgeBaseIds);
-        body.put("config", config);
-        return body;
-    }
-
-    private static Map<String, Object> buildBody(TaskDispatchCommand command, int timeoutSec, Long nextEventId) {
-        Map<String, Object> body = buildBody(command.taskId(), command.workspaceId(), command.userId(), command.query(),
-                timeoutSec, nextEventId, command.knowledgeBaseIds(), command.enableDataAnalysis());
-        body.put("phase", command.phase());
-        body.put("runId", command.runId());
-        body.put("planRevision", command.planRevision());
-        if (command.revisionInstruction() != null) body.put("revisionInstruction", command.revisionInstruction());
-        return body;
-    }
 }

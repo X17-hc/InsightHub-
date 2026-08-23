@@ -1,6 +1,5 @@
 package com.hechang.insighthub.service.impl;
 
-import jakarta.annotation.Resource;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
@@ -18,15 +17,15 @@ import com.hechang.insighthub.model.dto.task.AgentEventDto;
 import com.hechang.insighthub.model.dto.task.TaskEventResponse;
 import com.hechang.insighthub.model.entity.TaskEvent;
 import com.mybatisflex.core.query.QueryWrapper;
+import lombok.RequiredArgsConstructor;
 
 /** 任务事件适配器：负责协议解析、编号去重和事件持久化。 */
 @Service
+@RequiredArgsConstructor
 public class TaskEventService {
 
-    @Resource
-    private TaskEventMapper mapper;
-    @Resource
-    private ObjectMapper objectMapper;
+    private final TaskEventMapper mapper;
+    private final ObjectMapper objectMapper;
 
     public AgentEventDto toDto(JsonNode node) {
         AgentEventDto dto = new AgentEventDto();
@@ -136,6 +135,23 @@ public class TaskEventService {
             }
         }
         throw new IllegalStateException("unable to allocate terminal event number");
+    }
+
+    /** Stores a sanitized Agent TASK_RESULT; report content never enters the event log or SSE payload. */
+    public StoredEvent insertAgentResult(String taskId, JsonNode result) {
+        String runId = text(result, "runId");
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("status", text(result, "status"));
+        if (result.has("error") && !result.get("error").isNull()) {
+            data.put("error", objectMapper.convertValue(result.get("error"), Map.class));
+        }
+        data.put("hasReport", result.has("reportMarkdown")
+                && !result.get("reportMarkdown").isNull()
+                && !result.get("reportMarkdown").asText("").isBlank());
+        if (result.has("quality") && result.get("quality").isObject()) {
+            data.put("quality", objectMapper.convertValue(result.get("quality"), Map.class));
+        }
+        return insertServerEvent(taskId, runId, null, "TASK_RESULT", data);
     }
 
     /** Persist a Java-originated task event using the same task-scoped event sequence as Agent events. */

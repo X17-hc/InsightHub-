@@ -25,6 +25,7 @@ public class AgentTaskResponseDto {
     private List<AgentEventDto> events = new ArrayList<>();
     /** 结构化引用（供落库 citation） */
     private List<Map<String, Object>> citations = new ArrayList<>();
+    private Map<String, Object> quality;
     private Map<String, Object> error;
 
 }

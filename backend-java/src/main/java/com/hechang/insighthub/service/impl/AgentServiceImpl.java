@@ -1,6 +1,5 @@
 package com.hechang.insighthub.service.impl;
 
-import jakarta.annotation.Resource;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
@@ -19,11 +18,13 @@ import com.hechang.insighthub.service.WorkspaceAccessService;
 import com.mybatisflex.core.query.QueryWrapper;
 import com.mybatisflex.spring.service.impl.ServiceImpl;
 import com.mybatisflex.core.update.UpdateChain;
+import lombok.RequiredArgsConstructor;
 
 /**
  * Agent 配置业务实现。
  */
 @Service
+@RequiredArgsConstructor
 public class AgentServiceImpl extends ServiceImpl<AgentDefinitionMapper, AgentDefinition> implements AgentService {
 
     private static final Set<String> ALLOWED_TYPES = Set.of(
@@ -31,16 +32,12 @@ public class AgentServiceImpl extends ServiceImpl<AgentDefinitionMapper, AgentDe
 
     private static final Set<String> ALLOWED_RUNTIMES = Set.of("PYTHON", "JAVA");
 
-    @Resource
-    private WorkspaceAccessService accessService;
+    private final WorkspaceAccessService accessService;
 
     @Override
     public List<AgentResponse> list(String workspaceId) {
         accessService.requireCurrentMember(workspaceId);
-        return list(QueryWrapper.create()
-                .eq(AgentDefinition::getWorkspaceId, workspaceId)
-                .orderBy(AgentDefinition::getAgentType, true)
-                .orderBy(AgentDefinition::getName, true))
+        return mapper.listByWorkspace(workspaceId)
                 .stream().map(this::toResponse).toList();
     }
 
@@ -109,9 +106,7 @@ public class AgentServiceImpl extends ServiceImpl<AgentDefinitionMapper, AgentDe
     }
 
     private AgentDefinition findAgent(String workspaceId, String agentId) {
-        return getOne(QueryWrapper.create()
-                .eq(AgentDefinition::getId, agentId)
-                .eq(AgentDefinition::getWorkspaceId, workspaceId));
+        return mapper.findByIdAndWorkspace(agentId, workspaceId);
     }
 
     private AgentResponse toResponse(AgentDefinition row) {

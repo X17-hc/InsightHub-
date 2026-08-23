@@ -14,10 +14,16 @@ import lombok.RequiredArgsConstructor;
 public class KnowledgeIngestEventListener {
 
     private final KnowledgeService knowledgeService;
+    private final KnowledgeChunkCleanupExecutor cleanupExecutor;
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT, fallbackExecution = true)
     public void handle(DocumentIngestRequested event) {
         knowledgeService.ingestDocument(
                 event.workspaceId(), event.knowledgeBaseId(), event.documentId());
+    }
+
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT, fallbackExecution = true)
+    public void handle(KnowledgeChunksDeleteRequested event) {
+        cleanupExecutor.deleteByKnowledgeBase(event.workspaceId(), event.knowledgeBaseId());
     }
 }

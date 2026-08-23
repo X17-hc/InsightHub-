@@ -33,6 +33,10 @@ public class AppConfig {
      */
     @Bean
     public WebClient agentWebClient(AgentProperties props, ObjectMapper objectMapper) {
+        if (props.getBaseUrl() == null || props.getBaseUrl().isBlank()) {
+            throw new IllegalStateException(
+                    "insighthub.agent.base-url must be configured; set AGENT_BASE_URL");
+        }
         if (props.getInternalToken() == null || props.getInternalToken().isBlank()) {
             throw new IllegalStateException(
                     "insighthub.agent.internal-token must be configured; set AGENT_INTERNAL_TOKEN");

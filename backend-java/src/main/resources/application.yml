@@ -38,7 +38,8 @@ spring:
 
 insighthub:
   agent:
-    base-url: ${AGENT_BASE_URL:http://192.168.125.128:8000}
+    # Agent 地址必须由运行环境显式提供，避免重启后回退到旧虚拟机地址。
+    base-url: ${AGENT_BASE_URL:}
     internal-token: ${AGENT_INTERNAL_TOKEN:}
     connect-timeout-ms: 5000
     read-timeout-ms: 300000

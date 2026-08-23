@@ -19,7 +19,7 @@ import TaskTimeline from '@/components/TaskTimeline.vue'
 import { readSession } from '@/services/session'
 import { useStreamingReport } from '@/services/useStreamingReport'
 import { useTaskEvents } from '@/services/useTaskEvents'
-import { canCancelTask, canLoadReport, canPauseTask, canResumeTask, canRetryTask, formatDate, isTaskStatus, isTerminalTaskStatus } from '@/utils/display'
+import { canCancelTask, canLoadReport, canPauseTask, canResumeTask, canRetryTask, formatDate, isTaskStatus, isTerminalTaskStatus, qualityStatusMeta } from '@/utils/display'
 import type { AnalysisArtifact, Citation, CritiqueResult, CriticVerdict, PlanRevision, Report, ResearchTask, TaskEvent, TaskStatus } from '@/types'
 
 const route = useRoute()
@@ -30,6 +30,11 @@ const task = ref<ResearchTask | null>(null)
 const report = ref<Report | null>(null)
 const citations = ref<Citation[]>([])
 const artifacts = ref<AnalysisArtifact[]>([])
+const artifactState = ref<'loading' | 'disabled' | 'empty' | 'ready' | 'error'>('loading')
+const artifactError = ref('')
+const previewedArtifact = ref<AnalysisArtifact | null>(null)
+const artifactPreviewUrl = ref('')
+const artifactPreviewOpen = ref(false)
 const events = ref<TaskEvent[]>([])
 const currentPlan = ref<PlanRevision | null>(null)
 const planHistory = ref<PlanRevision[]>([])
@@ -44,6 +49,7 @@ const planActionLoading = ref<'' | 'approve' | 'revise'>('')
 const planApprovalOpen = ref(false)
 const planRevisionOpen = ref(false)
 const planHistoryOpen = ref(false)
+const reportVersionLoading = ref(false)
 
 const streaming = useStreamingReport()
 const streamingReport = streaming.content
@@ -54,7 +60,17 @@ const isCreator = computed(() => Boolean(task.value && task.value.creatorId === 
 const canPause = computed(() => canPauseTask(task.value?.status) && !planActionLoading.value)
 const canResume = computed(() => canResumeTask(task.value?.status) && !planActionLoading.value)
 const canCancel = computed(() => canCancelTask(task.value?.status) && !planActionLoading.value)
-const canRetry = computed(() => canRetryTask(task.value?.status) && !planActionLoading.value)
+const canRetry = computed(() => canRetryTask(task.value?.status, task.value?.qualityStatus) && !planActionLoading.value)
+const verifiedCitationCount = computed(() => citations.value.filter((item) => item.verificationStatus === 'VERIFIED').length)
+const planTaskStates = computed<Record<string, string>>(() => {
+  const states: Record<string, string> = {}
+  const labels: Record<string, string> = { PLAN_TASK_STARTED: '执行中', PLAN_TASK_COMPLETED: '已完成', PLAN_TASK_FAILED: '失败', PLAN_TASK_SKIPPED: '依赖失败，已跳过' }
+  events.value.forEach((event) => {
+    const planTaskId = typeof event.data?.planTaskId === 'string' ? event.data.planTaskId : undefined
+    if (planTaskId && labels[event.type]) states[planTaskId] = labels[event.type]
+  })
+  return states
+})
 
 function isExpectedPlanAbsence(error: unknown): boolean {
   if (!(error instanceof ApiError)) return false
@@ -132,23 +148,53 @@ async function loadReport() {
   }
 }
 
-async function selectReportVersion(version: number) {
-  try { report.value = await researchTaskApi.reportVersion(workspaceId.value, taskId.value, version) }
-  catch (error) { message.error(error instanceof Error ? error.message : '报告版本加载失败') }
+function artifactReason(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error || '')
+  if (raw.includes('SANDBOX_UNAVAILABLE')) return 'Sandbox 当前不可用，请检查 Ubuntu Agent 与 Docker 镜像。'
+  if (raw.includes('ARTIFACT_MIME_REJECTED')) return '产物类型未通过安全校验。'
+  if (raw.includes('ARTIFACT_TOO_LARGE')) return '产物超过允许的下载大小。'
+  if (error instanceof ApiError && error.code === 40300) return '无权访问该工作空间的产物。'
+  if (error instanceof ApiError && error.code === 40400) return '产物不存在或已失效。'
+  return raw || '产物服务不可用'
 }
 
-async function loadCitations() {
+async function loadLatestReportAndCitations() {
+  await loadReport()
+  if (!report.value) { citations.value = []; return }
   try {
-    citations.value = await researchTaskApi.citations(workspaceId.value, taskId.value)
+    citations.value = await researchTaskApi.reportCitations(workspaceId.value, taskId.value, report.value.version)
   } catch (error) {
     citations.value = []
     message.warning(error instanceof Error ? `引用加载失败：${error.message}` : '引用加载失败')
   }
 }
 
+async function selectReportVersion(version: number) {
+  if (reportVersionLoading.value || report.value?.version === version) return
+  reportVersionLoading.value = true
+  try {
+    const [nextReport, nextCitations] = await Promise.all([
+      researchTaskApi.reportVersion(workspaceId.value, taskId.value, version),
+      researchTaskApi.reportCitations(workspaceId.value, taskId.value, version),
+    ])
+    report.value = nextReport
+    citations.value = nextCitations
+  }
+  catch (error) { message.error(error instanceof Error ? error.message : '报告版本加载失败') }
+  finally { reportVersionLoading.value = false }
+}
+
 async function loadArtifacts() {
-  try { artifacts.value = await researchTaskApi.artifacts(workspaceId.value, taskId.value) }
-  catch { artifacts.value = [] }
+  artifactState.value = 'loading'; artifactError.value = ''
+  if (task.value?.enableDataAnalysis === false) { artifacts.value = []; artifactState.value = 'disabled'; return }
+  try {
+    artifacts.value = await researchTaskApi.artifacts(workspaceId.value, taskId.value)
+    artifactState.value = artifacts.value.length ? 'ready' : 'empty'
+  } catch (error) {
+    artifacts.value = []
+    artifactState.value = 'error'
+    artifactError.value = artifactReason(error)
+  }
 }
 
 async function downloadArtifact(artifact: AnalysisArtifact) {
@@ -156,7 +202,30 @@ async function downloadArtifact(artifact: AnalysisArtifact) {
     const blob = await researchTaskApi.artifactContent(workspaceId.value, taskId.value, artifact.id, 'attachment')
     const url = URL.createObjectURL(blob); const link = document.createElement('a')
     link.href = url; link.download = artifact.fileName; link.click(); URL.revokeObjectURL(url)
-  } catch (error) { message.error(error instanceof Error ? error.message : '产物下载失败') }
+  } catch (error) { message.error(artifactReason(error)) }
+}
+
+function canPreviewArtifact(artifact: AnalysisArtifact): boolean {
+  return artifact.mimeType === 'image/png' || artifact.mimeType === 'image/svg+xml'
+}
+
+function releaseArtifactPreview() {
+  if (artifactPreviewUrl.value) URL.revokeObjectURL(artifactPreviewUrl.value)
+  artifactPreviewUrl.value = ''
+  previewedArtifact.value = null
+}
+
+async function previewArtifact(artifact: AnalysisArtifact) {
+  if (!canPreviewArtifact(artifact)) return
+  releaseArtifactPreview()
+  try {
+    const blob = await researchTaskApi.artifactContent(workspaceId.value, taskId.value, artifact.id, 'inline')
+    artifactPreviewUrl.value = URL.createObjectURL(blob)
+    previewedArtifact.value = artifact
+    artifactPreviewOpen.value = true
+  } catch (error) {
+    message.error(artifactReason(error))
+  }
 }
 
 async function loadEvents() {
@@ -198,7 +267,7 @@ async function loadAll() {
   try {
     await loadTask()
     selectInitialTab()
-    await Promise.all([loadReport(), loadCitations(), loadArtifacts(), loadEvents(), loadPlans()])
+    await Promise.all([loadLatestReportAndCitations(), loadArtifacts(), loadEvents(), loadPlans()])
     connectEvents()
   } catch (error) {
     message.error(error instanceof Error ? error.message : '任务详情加载失败')
@@ -215,7 +284,7 @@ function connectEvents() {
 
 async function refreshAfterResult() {
   await loadTask()
-  await Promise.all([loadReport(), loadCitations(), loadArtifacts(), loadPlans()])
+  await Promise.all([loadLatestReportAndCitations(), loadArtifacts(), loadPlans()])
   if (terminal.value) eventStream.close()
 }
 
@@ -325,7 +394,10 @@ async function control(action: 'pause' | 'resume' | 'cancel' | 'retry') {
 }
 
 onMounted(loadAll)
-onBeforeUnmount(() => eventStream.close())
+onBeforeUnmount(() => {
+  eventStream.close()
+  releaseArtifactPreview()
+})
 </script>
 
 <template>
@@ -337,22 +409,22 @@ onBeforeUnmount(() => eventStream.close())
       <div v-if="loading" class="loading-section"><a-spin size="large" /></div>
       <template v-else-if="task">
         <div class="task-overview soft-panel">
-          <div class="task-state"><StatusTag :status="task.status"/><span class="task-state-copy">{{ task.status === 'WAITING_APPROVAL' ? '等待创建人确认计划' : connected ? '正在接收实时动态' : terminal ? '执行连接已结束' : '等待实时连接' }}</span><Wifi v-if="connected" :size="15" class="status-online"/><WifiOff v-else :size="15" class="status-offline"/></div>
-          <div class="task-progress"><div class="progress-heading"><span>执行进度</span><strong>{{ task.progress }}%</strong></div><a-progress :percent="task.progress" :show-info="false" status="active"/><div v-if="task.errorMessage" class="task-error"><strong>{{ task.errorCode || '执行失败' }}</strong>：{{ task.errorMessage }}</div></div>
+          <div class="task-state"><StatusTag :status="task.status"/><a-tag :color="qualityStatusMeta[task.qualityStatus]?.color">{{ qualityStatusMeta[task.qualityStatus]?.label || task.qualityStatus }}</a-tag><span class="task-state-copy">{{ task.status === 'WAITING_APPROVAL' ? '等待创建人确认计划' : connected ? '正在接收实时动态' : terminal ? '执行连接已结束' : '等待实时连接' }}</span><Wifi v-if="connected" :size="15" class="status-online"/><WifiOff v-else :size="15" class="status-offline"/></div>
+          <div class="task-progress"><div class="progress-heading"><span>执行进度</span><strong>{{ task.progress }}%</strong></div><a-progress :percent="task.progress" :show-info="false" status="active"/><div v-if="task.errorMessage" class="task-error"><strong>{{ task.errorCode || '执行失败' }}</strong>：{{ task.errorMessage }}</div><div v-else-if="task.qualityStatus === 'FAIL' && task.qualitySummary" class="task-error"><strong>执行完成 · 质量未通过</strong>：{{ task.qualitySummary }}</div></div>
           <div class="task-actions"><a-button v-if="canPause" :loading="actionLoading === 'pause'" @click="control('pause')"><Pause :size="15"/> 暂停</a-button><a-button v-if="canResume" type="primary" :loading="actionLoading === 'resume'" @click="control('resume')"><Play :size="15"/> 恢复</a-button><a-popconfirm v-if="canCancel" title="确定取消这个研究任务吗？" ok-text="取消任务" cancel-text="保留任务" @confirm="control('cancel')"><a-button danger :loading="actionLoading === 'cancel'"><CircleStop :size="15"/> 取消</a-button></a-popconfirm><a-button v-if="canRetry" type="primary" :loading="actionLoading === 'retry'" @click="control('retry')"><RotateCcw :size="15"/> 重试</a-button><a-button :disabled="Boolean(planActionLoading)" @click="loadAll"><RefreshCw :size="15"/> 刷新</a-button></div>
         </div>
         <div class="mobile-tabs"><a-tabs v-model:active-key="activeTab"><a-tab-pane key="plan" tab="计划"/><a-tab-pane key="activity" tab="动态"/><a-tab-pane key="report" tab="报告"/><a-tab-pane key="sources" tab="来源"/></a-tabs></div>
         <div class="detail-grid detail-grid-week5">
           <section class="plan-activity-column" :class="{ 'mobile-hidden': !['plan', 'activity'].includes(activeTab) }">
-            <div :class="{ 'mobile-hidden': activeTab !== 'plan' }"><TaskPlanPanel :plan="currentPlan" :task-status="task.status" :loading="planLoading" :is-creator="isCreator" :action-loading="planActionLoading" :history-count="planHistory.length" @approve="planApprovalOpen = true" @revise="planRevisionOpen = true" @show-history="planHistoryOpen = true"/></div>
+            <div :class="{ 'mobile-hidden': activeTab !== 'plan' }"><TaskPlanPanel :plan="currentPlan" :task-status="task.status" :loading="planLoading" :is-creator="isCreator" :action-loading="planActionLoading" :history-count="planHistory.length" :task-states="planTaskStates" @approve="planApprovalOpen = true" @revise="planRevisionOpen = true" @show-history="planHistoryOpen = true"/></div>
             <div class="activity-section" :class="{ 'mobile-hidden': activeTab !== 'activity' }"><div class="section-title"><div><h2>执行动态</h2><p>按事件序号实时接收，断线后自动续传。</p></div><span v-if="events.length" class="event-count">{{ events.length }} 个事件</span></div><TaskTimeline :events="events" :terminal="terminal"/></div>
           </section>
-          <section class="report-column" :class="{ 'mobile-hidden': activeTab !== 'report' }"><TaskReport :report="report" :streaming-content="streamingReport" :status="task.status" :workspace-id="workspaceId" :task-id="taskId" @select-version="selectReportVersion"/></section>
+          <section class="report-column" :class="{ 'mobile-hidden': activeTab !== 'report' }"><div v-if="report?.qualityStatus === 'LEGACY_SYNTHETIC'" class="task-error"><strong>历史演示数据</strong>：该报告使用合成来源，不代表真实研究结果。请使用真实检索重试。</div><TaskReport :report="report" :streaming-content="streamingReport" :status="task.status" :workspace-id="workspaceId" :task-id="taskId" :version-loading="reportVersionLoading" @select-version="selectReportVersion"/></section>
           <section class="quality-column" :class="{ 'mobile-hidden': activeTab !== 'sources' }">
             <CriticSummaryCard :critique="critique" :reviewing="criticReviewing" :supplementing="criticSupplementing" :terminal="terminal"/>
-            <div class="section-title citation-heading"><div><h2>引用来源</h2><p>报告中使用的可追溯材料。</p></div><span class="event-count">{{ citations.length }} 条</span></div>
+            <div class="section-title citation-heading"><div><h2>引用来源</h2><p>当前报告版本的可追溯材料。</p></div><span class="event-count">真实来源 {{ verifiedCitationCount }} 条</span></div>
             <CitationList :citations="citations"/>
-            <div class="future-features"><div class="soft-panel"><div class="section-title"><div><h2><BarChart3 :size="18"/> 分析产物</h2><p>受限 Sandbox 生成的表格与图表。</p></div><span>{{ artifacts.length }} 项</span></div><a-list v-if="artifacts.length" size="small" :data-source="artifacts"><template #renderItem="item"><a-list-item><span>{{ item.title || item.fileName }} · {{ item.mimeType }}</span><a-button type="link" @click="downloadArtifact(item)">下载</a-button></a-list-item></template></a-list><p v-else>暂无分析产物；创建任务时启用“生成分析产物”后可生成。</p></div><div class="soft-panel"><div class="section-title"><div><h2><Database :size="18"/> 报告版本与导出</h2><p>历史版本和 HTML/PDF 导出位于报告区域。</p></div></div></div></div>
+            <div class="future-features"><div class="soft-panel"><div class="section-title"><div><h2><BarChart3 :size="18"/> 分析产物</h2><p>受限 Sandbox 生成的表格与图表。</p></div><span>{{ artifacts.length }} 项</span></div><a-spin v-if="artifactState === 'loading'"/><a-list v-else-if="artifactState === 'ready'" size="small" :data-source="artifacts"><template #renderItem="item"><a-list-item><span>{{ item.title || item.fileName }} · {{ item.mimeType }}</span><div><a-button v-if="canPreviewArtifact(item)" type="link" @click="previewArtifact(item)">预览</a-button><a-button type="link" @click="downloadArtifact(item)">下载</a-button></div></a-list-item></template></a-list><p v-else-if="artifactState === 'disabled'">本任务创建时未启用分析产物。</p><p v-else-if="artifactState === 'empty'">分析已启用，但没有生成可用产物。</p><p v-else class="task-error"><strong>产物加载失败</strong>：{{ artifactError }}</p></div><div class="soft-panel"><div class="section-title"><div><h2><Database :size="18"/> 报告版本与导出</h2><p>历史版本和 HTML/PDF 导出位于报告区域。</p></div></div></div></div>
           </section>
         </div>
       </template>
@@ -361,5 +433,6 @@ onBeforeUnmount(() => eventStream.close())
     <PlanApprovalModal v-model:open="planApprovalOpen" :plan="currentPlan" :loading="planActionLoading === 'approve'" @submit="approvePlan"/>
     <PlanRevisionModal v-model:open="planRevisionOpen" :plan="currentPlan" :loading="planActionLoading === 'revise'" @submit="revisePlan"/>
     <PlanHistoryDrawer v-model:open="planHistoryOpen" :plans="planHistory" :current-id="currentPlan?.id"/>
+    <a-modal v-model:open="artifactPreviewOpen" :title="previewedArtifact?.title || previewedArtifact?.fileName" :footer="null" @after-close="releaseArtifactPreview"><img v-if="artifactPreviewUrl" :src="artifactPreviewUrl" :alt="previewedArtifact?.title || previewedArtifact?.fileName" style="display:block;max-width:100%;max-height:70vh;margin:auto" /></a-modal>
   </AppShell>
 </template>

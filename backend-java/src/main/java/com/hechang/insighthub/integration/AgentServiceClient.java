@@ -1,6 +1,5 @@
 package com.hechang.insighthub.integration;
 
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -25,6 +24,7 @@ public class AgentServiceClient {
     private static final Logger log = LoggerFactory.getLogger(AgentServiceClient.class);
 
     private final WebClient agentWebClient;
+    private final AgentTaskRequestFactory requestFactory;
 
     /**
      * 创建并同步执行 Agent 任务。
@@ -43,21 +43,8 @@ public class AgentServiceClient {
             String query,
             String traceId,
             List<String> knowledgeBaseIds, boolean enableDataAnalysis) {
-        Map<String, Object> config = new HashMap<>();
-        config.put("maxSteps", 20);
-        config.put("maxParallelism", 3);
-        config.put("requirePlanApproval", false);
-        config.put("enableWebSearch", true);
-        config.put("maxCriticRounds", 2);
-        config.put("enableDataAnalysis", enableDataAnalysis);
-
-        Map<String, Object> body = new HashMap<>();
-        body.put("taskId", taskId);
-        body.put("workspaceId", workspaceId);
-        body.put("userId", userId);
-        body.put("query", query);
-        body.put("knowledgeBaseIds", knowledgeBaseIds == null ? List.of() : knowledgeBaseIds);
-        body.put("config", config);
+        Map<String, Object> body = requestFactory.forSynchronousTask(
+                taskId, workspaceId, userId, query, knowledgeBaseIds, enableDataAnalysis);
 
         String idempotencyKey = taskId + "-attempt-1";
 

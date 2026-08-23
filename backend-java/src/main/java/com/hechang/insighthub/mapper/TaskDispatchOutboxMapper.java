@@ -7,6 +7,7 @@ import org.apache.ibatis.annotations.Select;
 import org.apache.ibatis.annotations.Update;
 import com.hechang.insighthub.model.entity.TaskDispatchOutbox;
 import com.mybatisflex.core.BaseMapper;
+import com.mybatisflex.core.query.QueryWrapper;
 
 public interface TaskDispatchOutboxMapper extends BaseMapper<TaskDispatchOutbox> {
     @Select("SELECT * FROM task_dispatch_outbox WHERE status IN ('PENDING','RETRY') AND (next_attempt_at IS NULL OR next_attempt_at <= NOW()) ORDER BY created_at LIMIT #{limit}")
@@ -27,4 +28,8 @@ public interface TaskDispatchOutboxMapper extends BaseMapper<TaskDispatchOutbox>
 
     @Update("UPDATE task_dispatch_outbox SET status='FAILED', last_error=#{error}, updated_at=NOW() WHERE id=#{id}")
     int markFailed(@Param("id") String id, @Param("error") String error);
+
+    default int deleteByTaskId(String taskId) {
+        return deleteByQuery(QueryWrapper.create().eq(TaskDispatchOutbox::getTaskId, taskId));
+    }
 }

@@ -1,6 +1,5 @@
 package com.hechang.insighthub.service.impl;
 
-import jakarta.annotation.Resource;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
@@ -36,29 +35,27 @@ import com.hechang.insighthub.model.dto.task.PlanActionResponse;
 import com.hechang.insighthub.service.CurrentWorkspaceAccess;
 import com.mybatisflex.core.query.QueryChain;
 import com.mybatisflex.spring.service.impl.ServiceImpl;
+import lombok.RequiredArgsConstructor;
 
 @Service
+@RequiredArgsConstructor
 public class PlanApplicationServiceImpl extends ServiceImpl<TaskPlanRevisionMapper, TaskPlanRevision>
         implements PlanApplicationService {
 
     private static final List<String> CURRENT_PLAN_STATUSES = List.of("PENDING", "APPROVED");
     private static final String PLAN_PENDING = "PENDING";
 
-    @Resource
-    private ResearchTaskMapper taskMapper;
-    @Resource
-    private TaskPlanRevisionMapper revisionMapper;
-    @Resource
-    private WorkspaceAccessService accessService;
-    @Resource
-    private ObjectMapper objectMapper;
-    @Resource private AuditLogService auditLogService;
-    @Resource private TaskDispatchOutboxMapper outboxMapper;
-    @Resource private WorkspaceConcurrencyService concurrencyService;
-    @Resource private TaskSlotTracker slotTracker;
-    @Resource private TaskProperties taskProperties;
-    @Resource private ApplicationEventPublisher eventPublisher;
-    @Resource private TaskEventService taskEventService;
+    private final ResearchTaskMapper taskMapper;
+    private final TaskPlanRevisionMapper revisionMapper;
+    private final WorkspaceAccessService accessService;
+    private final ObjectMapper objectMapper;
+    private final AuditLogService auditLogService;
+    private final TaskDispatchOutboxMapper outboxMapper;
+    private final WorkspaceConcurrencyService concurrencyService;
+    private final TaskSlotTracker slotTracker;
+    private final TaskProperties taskProperties;
+    private final ApplicationEventPublisher eventPublisher;
+    private final TaskEventService taskEventService;
 
     @Override
     public PlanRevisionResponse current(String workspaceId, String taskId) {
@@ -209,6 +206,7 @@ public class PlanApplicationServiceImpl extends ServiceImpl<TaskPlanRevisionMapp
                     row.getRevisionInstruction(),
                     row.getCreatedBy(),
                     row.getApprovedBy(),
+                    row.getApprovalRemark(),
                     row.getCreatedAt(),
                     row.getApprovedAt());
         } catch (JsonProcessingException ex) {
@@ -225,7 +223,8 @@ public class PlanApplicationServiceImpl extends ServiceImpl<TaskPlanRevisionMapp
         try {
             ResearchTask task = requireCreatorAndWaiting(workspaceId, taskId, actor);
             TaskPlanRevision revision = requirePendingRevision(task, workspaceId, request.expectedRevision());
-            if (revisionMapper.approvePending(revision.getId(), actor.userId(), LocalDateTime.now()) != 1) {
+            String approvalRemark = normalizeRemark(request.remark());
+            if (revisionMapper.approvePending(revision.getId(), actor.userId(), approvalRemark, LocalDateTime.now()) != 1) {
                 throw BusinessException.conflict("PLAN_ALREADY_CHANGED", "plan is no longer pending");
             }
             if (taskMapper.updatePlanAction(taskId, workspaceId, TaskStatus.RUNNING.name(), 1,
@@ -239,6 +238,11 @@ public class PlanApplicationServiceImpl extends ServiceImpl<TaskPlanRevisionMapp
                             "planHash", revision.getPlanHash(), "remarkLength", request.remark() == null ? 0 : request.remark().length()), ip);
             eventPublisher.publishEvent(new TaskDispatchRequested(
                     enqueue(commandFor(task, revision, actor.userId(), "EXECUTE", null, revision.getPlanHash()))));
+            TaskEventService.StoredEvent approvedEvent = taskEventService.insertServerEvent(
+                    taskId, task.getCurrentRunId(), "wait_for_approval", "PLAN_APPROVED",
+                    Map.of("planRevision", revision.getRevisionNo(), "approvedBy", actor.userId(),
+                            "hasRemark", approvalRemark != null));
+            eventPublisher.publishEvent(new TaskEventPublished(taskId, approvedEvent));
             return new PlanActionResponse(taskId, revision.getRevisionNo(), TaskStatus.RUNNING.name(), task.getCurrentRunId());
         } catch (RuntimeException ex) {
             if (held) {
@@ -248,6 +252,12 @@ public class PlanApplicationServiceImpl extends ServiceImpl<TaskPlanRevisionMapp
             }
             throw ex;
         }
+    }
+
+    private static String normalizeRemark(String value) {
+        if (value == null) return null;
+        String normalized = value.trim().replaceAll("\\s+", " ");
+        return normalized.isBlank() ? null : normalized;
     }
 
     @Override

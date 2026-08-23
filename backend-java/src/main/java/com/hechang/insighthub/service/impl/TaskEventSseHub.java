@@ -1,13 +1,10 @@
 package com.hechang.insighthub.service.impl;
 
-import jakarta.annotation.Resource;
 import java.io.IOException;
-import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
@@ -32,33 +29,24 @@ import com.hechang.insighthub.model.entity.ResearchTask;
 import com.hechang.insighthub.model.entity.TaskEvent;
 import com.hechang.insighthub.model.enums.TaskStatus;
 import com.hechang.insighthub.redis.TaskControlRedis;
-import com.mybatisflex.core.query.QueryWrapper;
+import lombok.RequiredArgsConstructor;
 
 /**
  * SSE 连接管理：MySQL 回放 + Redis 订阅 + DB 轮询降级 + 心跳。
  */
 @Component
+@RequiredArgsConstructor
 public class TaskEventSseHub {
 
     private static final Logger log = LoggerFactory.getLogger(TaskEventSseHub.class);
 
-    @Resource
-    private ResearchTaskMapper researchTaskMapper;
-    @Resource
-    private TaskEventMapper taskEventMapper;
-    @Resource
-    private RedisMessageListenerContainer listenerContainer;
-    @Resource
-    private ObjectMapper objectMapper;
-    @Resource
-    private TaskEventService taskEventService;
-    @Resource
-    private TaskProperties taskProperties;
-    private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(2, r -> {
-        Thread t = new Thread(r, "ih-sse-scheduler");
-        t.setDaemon(true);
-        return t;
-    });
+    private final ResearchTaskMapper researchTaskMapper;
+    private final TaskEventMapper taskEventMapper;
+    private final RedisMessageListenerContainer listenerContainer;
+    private final ObjectMapper objectMapper;
+    private final TaskEventService taskEventService;
+    private final TaskProperties taskProperties;
+    private final ScheduledExecutorService sseScheduler;
 
     /** taskId -> emitters */
     private final ConcurrentHashMap<String, CopyOnWriteArrayList<EmitterSession>> sessions = new ConcurrentHashMap<>();
@@ -96,8 +84,7 @@ public class TaskEventSseHub {
         }
 
         if (isTerminal(task.getStatus())) {
-            emitter.complete();
-            removeSession(taskId, session);
+            completeSession(session);
             return emitter;
         }
 
@@ -121,7 +108,7 @@ public class TaskEventSseHub {
 
         // 心跳
         int hb = Math.max(5, taskProperties.getSseHeartbeatSeconds());
-        session.heartbeat = scheduler.scheduleAtFixedRate(
+        session.heartbeat = sseScheduler.scheduleAtFixedRate(
                 () -> {
                     try {
                         emitter.send(SseEmitter.event().comment("ping"));
@@ -134,7 +121,7 @@ public class TaskEventSseHub {
                 TimeUnit.SECONDS);
 
         // Redis 宕机/漏推时：每 1s 从 MySQL 拉取 lastSent 之后的事件
-        session.dbPoll = scheduler.scheduleAtFixedRate(
+        session.dbPoll = sseScheduler.scheduleAtFixedRate(
                 () -> pollDbEvents(session, workspaceId),
                 1,
                 1,
@@ -154,6 +141,9 @@ public class TaskEventSseHub {
                 continue;
             }
             sendRaw(s, eventNo, type, json);
+            if (s.closed.get()) {
+                continue;
+            }
             if (eventNo > 0) {
                 s.lastSent.set(eventNo);
             }
@@ -166,8 +156,7 @@ public class TaskEventSseHub {
             return;
         }
         for (EmitterSession s : list) {
-            removeSession(taskId, s);
-            completeQuietly(s.emitter);
+            completeSession(s);
         }
     }
 
@@ -184,12 +173,14 @@ public class TaskEventSseHub {
                     continue;
                 }
                 sendEvent(session, eventNo, row.getEventType(), toClientJson(session.taskId, row));
+                if (session.closed.get()) {
+                    return;
+                }
                 session.lastSent.set(eventNo);
             }
             ResearchTask task = researchTaskMapper.findByIdAndWorkspace(session.taskId, workspaceId);
             if (task != null && isTerminal(task.getStatus())) {
-                completeQuietly(session.emitter);
-                removeSession(session.taskId, session);
+                completeSession(session);
             }
         } catch (Exception ex) {
             log.warn("SSE DB poll failed taskId={}", session.taskId, ex);
@@ -209,6 +200,9 @@ public class TaskEventSseHub {
         }
         String type = String.valueOf(map.getOrDefault("type", "EVENT"));
         sendRaw(session, eventNo, type, json);
+        if (session.closed.get()) {
+            return;
+        }
         if (eventNo > 0) {
             session.lastSent.set(eventNo);
         }
@@ -216,22 +210,21 @@ public class TaskEventSseHub {
         if ("TASK_RESULT".equals(type)) {
             Object status = map.get("status");
             if (status != null && isTerminal(String.valueOf(status))) {
-                completeQuietly(session.emitter);
+                completeSession(session);
             }
         } else if ("TASK_FAILED".equals(type)) {
-            completeQuietly(session.emitter);
+            completeSession(session);
         }
     }
 
     private List<TaskEvent> listAfterEventNo(String taskId, long fromEventNo) {
-        return taskEventMapper.selectListByQuery(QueryWrapper.create()
-                .eq(TaskEvent::getTaskId, taskId)
-                .gt(TaskEvent::getEventNo, fromEventNo)
-                .orderBy(TaskEvent::getEventNo, true));
+        return taskEventMapper.listAfterEventNo(taskId, fromEventNo);
     }
 
-    private void removeSession(String taskId, EmitterSession session) {
-        session.closed.set(true);
+    private boolean removeSession(String taskId, EmitterSession session) {
+        if (!session.closed.compareAndSet(false, true)) {
+            return false;
+        }
         CopyOnWriteArrayList<EmitterSession> list = sessions.get(taskId);
         if (list != null) {
             list.remove(session);
@@ -252,6 +245,7 @@ public class TaskEventSseHub {
                 // ignore
             }
         }
+        return true;
     }
 
     private void sendEvent(EmitterSession session, long eventNo, String type, String json) {
@@ -259,14 +253,26 @@ public class TaskEventSseHub {
     }
 
     private void sendRaw(EmitterSession session, long eventNo, String type, String json) {
+        if (session.closed.get()) {
+            return;
+        }
         try {
             SseEmitter.SseEventBuilder builder = SseEmitter.event()
                     .id(String.valueOf(eventNo))
                     .name(type == null ? "message" : type)
                     .data(json);
             session.emitter.send(builder);
-        } catch (IOException ex) {
+        } catch (IOException | IllegalStateException ex) {
+            // 浏览器关闭 SSE 连接是正常控制流；不要再次 complete 一个已不可用的响应。
             removeSession(session.taskId, session);
+        }
+    }
+
+    /**
+     * 主动结束仍有效的流。先从所有推送来源移除，避免 Redis/轮询并发发送到已完成的响应。
+     */
+    private void completeSession(EmitterSession session) {
+        if (removeSession(session.taskId, session)) {
             completeQuietly(session.emitter);
         }
     }

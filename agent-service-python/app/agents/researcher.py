@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 from typing import Any
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
@@ -15,7 +16,7 @@ from app.graph.deadline import remaining_seconds
 from app.graph.limits import claim_step
 from app.graph.state import ResearchState
 from app.tools.web_fetch import fetch_url
-from app.tools.web_search import search_web
+from app.tools.web_search import WebSearchError, search_web
 
 _SYNTHETIC_SYSTEM = """你是研究助理。在没有实时搜索结果时，请基于公开常识生成结构化研究笔记。
 必须输出 JSON 数组，不要 Markdown。每项：
@@ -68,14 +69,39 @@ def _to_evidence(items: list[dict[str, Any]], task_ref: str) -> list[dict[str, A
                 "id": f"ev-{task_ref}-{idx}",
                 "sourceTitle": item.get("title") or item.get("sourceTitle") or "Untitled",
                 "sourceUri": item.get("url") or item.get("sourceUri") or "",
+                "canonicalUri": item.get("canonicalUri") or _canonical_url(item.get("url") or item.get("sourceUri") or ""),
+                "finalUri": item.get("finalUrl") or item.get("finalUri"),
                 "quotedText": item.get("snippet") or item.get("quotedText") or "",
                 "sourceType": item.get("sourceType") or "WEB",
                 "documentId": item.get("documentId"),
                 "chunkId": item.get("chunkId"),
-                "verified": False,
+                "verificationStatus": item.get("verificationStatus") or "CANDIDATE",
+                "verificationReason": item.get("verificationReason") or "source has not passed page-content verification",
+                "retrievedAt": item.get("retrievedAt"),
+                "contentHash": item.get("contentHash"),
+                "httpStatus": item.get("httpStatus"),
+                "verified": item.get("verificationStatus") == "VERIFIED",
             }
         )
     return evidence
+
+
+def _canonical_url(value: str) -> str:
+    try:
+        parts = urlsplit(value.strip())
+        if parts.scheme.lower() not in {"http", "https"} or not parts.hostname:
+            return ""
+        host = parts.hostname.lower().rstrip(".")
+        port = parts.port
+        default_port = 443 if parts.scheme.lower() == "https" else 80
+        display_host = f"[{host}]" if ":" in host else host
+        netloc = display_host if port in {None, default_port} else f"{display_host}:{port}"
+        query = urlencode(sorted((k, v) for k, v in parse_qsl(parts.query, keep_blank_values=True)
+                                  if not k.lower().startswith("utm_") and k.lower() not in {"fbclid", "gclid"}))
+        path = parts.path or "/"
+        return urlunsplit((parts.scheme.lower(), netloc, path.rstrip("/") or "/", query, ""))
+    except (TypeError, ValueError):
+        return ""
 
 
 def web_research(state: ResearchState) -> dict[str, Any]:
@@ -150,9 +176,11 @@ def web_research(state: ResearchState) -> dict[str, Any]:
 
         raw: list[dict[str, Any]] = []
         if state.get("enable_web_search", True):
+            search_error: WebSearchError | None = None
             try:
                 raw = search_web(query, timeout_seconds=remaining_seconds(state, 30))
-            except Exception as exc:  # noqa: BLE001 - 工具失败降级
+            except WebSearchError as exc:
+                search_error = exc
                 delta.append(
                     make_event(
                         events=events + delta,
@@ -160,9 +188,12 @@ def web_research(state: ResearchState) -> dict[str, Any]:
                         run_id=run_id,
                         event_type="TOOL_COMPLETED",
                         node="web_research",
-                        data={"tool": "web_search", "ok": False, "error": str(exc)},
+                        data={"tool": "web_search", "ok": False, "code": exc.code},
                     )
                 )
+                raw = []
+            except Exception:
+                search_error = WebSearchError("SEARCH_UNAVAILABLE", "web search request failed")
                 raw = []
 
         if raw:
@@ -176,18 +207,58 @@ def web_research(state: ResearchState) -> dict[str, Any]:
                     data={"tool": "web_search", "ok": True, "count": len(raw)},
                 )
             )
-            # 对首条结果尝试网页抽取，丰富 snippet（失败忽略）
-            first_url = raw[0].get("url")
-            if first_url:
-                fetched = fetch_url(str(first_url), timeout_seconds=remaining_seconds(state, 12))
+            verified_candidates: list[dict[str, Any]] = []
+            fetch_failure_count = 0
+            for candidate in raw:
+                url = str(candidate.get("url") or "")
+                fetched = fetch_url(url, timeout_seconds=remaining_seconds(state, 12)) if url else None
                 if fetched:
-                    raw[0] = {**raw[0], **fetched}
-            evidence = _to_evidence(raw, str(sub.get("id") or "x"))
+                    verified_candidates.append({**candidate, **fetched, "canonicalUri": _canonical_url(url)})
+                else:
+                    fetch_failure_count += 1
+                    verified_candidates.append({
+                        **candidate,
+                        "canonicalUri": _canonical_url(url),
+                        "verificationStatus": "CANDIDATE",
+                        "verificationReason": "SOURCE_FETCH_FAILED",
+                    })
+            if fetch_failure_count:
+                delta.append(make_event(
+                    events=events + delta, task_id=task_id, run_id=run_id,
+                    event_type="SOURCE_FETCH_FAILED", node="web_research",
+                    data={"code": "SOURCE_FETCH_FAILED", "count": fetch_failure_count},
+                ))
+            evidence = _to_evidence(verified_candidates, str(sub.get("id") or "x"))
         else:
-            # SYNTHETIC 降级：保证验收可演示且仍带来源字段
-            if settings.agent_mock_llm or not settings.deepseek_api_key:
+            if not settings.synthetic_allowed():
+                failure = search_error or WebSearchError("SEARCH_NO_RESULTS", "web search returned no usable results")
+                failed_event = make_event(
+                    events=events + delta,
+                    task_id=task_id,
+                    run_id=run_id,
+                    event_type="WEB_SEARCH_FAILED",
+                    node="web_research",
+                    data={"code": failure.code, "message": str(failure)},
+                )
+                task_failed = make_event(
+                    events=events + delta + [failed_event],
+                    task_id=task_id,
+                    run_id=run_id,
+                    event_type="TASK_FAILED",
+                    node="web_research",
+                    data={"code": failure.code, "message": str(failure)},
+                )
+                return {
+                    "status": "FAILED",
+                    "errors": [{"code": failure.code, "message": str(failure)}],
+                    "step_count": step,
+                    "events": delta + [failed_event, task_failed],
+                }
+            if settings.agent_mock_llm:
                 synthetic_items = _mock_evidence(query)
             else:
+                if not settings.deepseek_api_key.strip():
+                    raise RuntimeError("LLM_NOT_CONFIGURED")
                 model = get_chat_model(
                     temperature=0.2,
                     timeout_seconds=remaining_seconds(state, 60),
@@ -199,6 +270,7 @@ def web_research(state: ResearchState) -> dict[str, Any]:
                     ]
                 )
                 synthetic_items = _extract_json_array(str(resp.content)) or _mock_evidence(query)
+            synthetic_items = [{**item, "verificationStatus": "SYNTHETIC", "verificationReason": "explicit non-production synthetic demo"} for item in synthetic_items]
             evidence = _to_evidence(synthetic_items, str(sub.get("id") or "x"))
             delta.append(
                 make_event(
@@ -221,7 +293,7 @@ def web_research(state: ResearchState) -> dict[str, Any]:
             run_id=run_id,
             event_type="NODE_COMPLETED",
             node="web_research",
-            data={"agent": "Researcher", "sourceCount": len(all_evidence)},
+            data={"agent": "Researcher", "addedSourceCount": len(all_evidence) - len(state.get("evidence") or []), "totalSourceCount": len(all_evidence)},
         )
     )
 

@@ -17,7 +17,7 @@ const orderedPlans = computed(() => [...props.plans].sort((left, right) => right
       <details v-for="item in orderedPlans" :key="item.id" class="history-item" :open="item.id === currentId">
         <summary>
           <div>
-            <strong>修订版 {{ item.revisionNo }}</strong>
+            <strong>{{ item.revisionNo === 1 ? '版本 1' : `修订版 ${item.revisionNo}` }}</strong>
             <span><CalendarDays :size="12" /> {{ formatDate(item.createdAt) }}</span>
           </div>
           <a-tag :color="planStatusMeta[item.status]?.color || 'default'">{{ planStatusMeta[item.status]?.label || item.status }}</a-tag>
@@ -26,9 +26,11 @@ const orderedPlans = computed(() => [...props.plans].sort((left, right) => right
           <h3>{{ item.plan.title }}</h3>
           <p class="history-objective">{{ item.plan.objective }}</p>
           <div v-if="item.revisionInstruction" class="history-instruction"><strong>修订意见</strong><p>{{ item.revisionInstruction }}</p></div>
+          <div v-if="item.approvalRemark" class="history-instruction"><strong>审批备注</strong><p>{{ item.approvalRemark }}</p></div>
           <div class="history-meta">
             <span><BookOpen :size="13" /> {{ item.plan.tasks.length }} 个研究任务</span>
             <span v-if="item.approvedAt"><CheckCircle2 :size="13" /> {{ formatDate(item.approvedAt) }} 批准</span>
+            <span v-if="item.approvedBy">批准人：{{ item.approvedBy }}</span>
             <span v-else><Clock3 :size="13" /> 尚未批准</span>
           </div>
         </div>

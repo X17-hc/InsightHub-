@@ -20,6 +20,11 @@ public class TaskSummaryResponse {
     private String runId;
     private String errorCode;
     private String errorMessage;
+    private String qualityStatus;
+    private String qualitySummary;
+    private int verifiedCitationCount;
+    private int totalCitationCount;
+    private boolean enableDataAnalysis;
     private Timestamp createdAt;
 
 

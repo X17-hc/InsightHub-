@@ -52,6 +52,27 @@ public class Citation {
     /** 是否通过校验：1=是 0=否 */
     private Integer verified;
 
+    @Column("verification_status")
+    private String verificationStatus;
+
+    @Column("verification_reason")
+    private String verificationReason;
+
+    @Column("canonical_uri")
+    private String canonicalUri;
+
+    @Column("final_uri")
+    private String finalUri;
+
+    @Column("retrieved_at")
+    private LocalDateTime retrievedAt;
+
+    @Column("content_hash")
+    private String contentHash;
+
+    @Column("http_status")
+    private Integer httpStatus;
+
     @Column(value = "created_at", onInsertValue = "now()")
     private LocalDateTime createdAt;
 }

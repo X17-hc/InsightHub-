@@ -29,7 +29,7 @@ class RuleEvidenceVerifier:
     规则核验策略。
 
     - 非空 quotedText（至少 20 字）+ 有效 sourceTitle/sourceUri → 可标 verified
-    - SYNTHETIC 默认未验证（仅 AGENT_MOCK_LLM 明确允许）
+    - SYNTHETIC 永远不允许成为已核验证据
     - 重复 URI / 空摘要 / 过短摘录 → 未验证
     """
 
@@ -49,7 +49,7 @@ class RuleEvidenceVerifier:
         result: list[Evidence] = []
         for raw in evidence:
             item = self._normalize(raw)
-            uri = (item.get("sourceUri") or "").strip().lower()
+            uri = (item.get("canonicalUri") or item.get("sourceUri") or "").strip().lower()
             title = (item.get("sourceTitle") or "").strip()
             quote = (item.get("quotedText") or "").strip()
             source_type = (item.get("sourceType") or "WEB").upper()
@@ -58,24 +58,44 @@ class RuleEvidenceVerifier:
                 seen_uris.add(uri)
 
             verified = False
+            status = str(item.get("verificationStatus") or "CANDIDATE").upper()
+            reason = item.get("verificationReason")
             quote_ok = len(quote) >= self._MIN_QUOTE_LEN
             if quote_ok and title and not duplicate:
-                if source_type == "SYNTHETIC":
-                    verified = self._allow_synthetic
+                if source_type == "SYNTHETIC" or status == "SYNTHETIC":
+                    verified = False
+                    status = "SYNTHETIC"
+                    reason = reason or "synthetic evidence is never verified"
                 elif source_type == "WEB":
-                    verified = bool(uri) and (
-                        uri.startswith("http://") or uri.startswith("https://")
+                    verified = (
+                        status == "VERIFIED"
+                        and bool(uri)
+                        and bool(item.get("finalUri"))
+                        and bool(item.get("retrievedAt"))
+                        and bool(item.get("contentHash"))
+                        and int(item.get("httpStatus") or 0) in range(200, 300)
                     )
                 elif source_type == "KNOWLEDGE":
-                    verified = bool(uri) or bool(item.get("documentId") or item.get("chunkId"))
+                    verified = bool(item.get("documentId") and item.get("chunkId")) and status == "VERIFIED"
                 else:
-                    verified = bool(uri)
+                    verified = status == "VERIFIED" and bool(uri)
+            if duplicate:
+                verified = False
+                status = "CANDIDATE"
+                reason = "duplicate canonical source"
+            elif verified:
+                status = "VERIFIED"
+            elif status != "SYNTHETIC":
+                status = "CANDIDATE"
+                reason = reason or "source did not pass content verification"
 
             result.append(
                 Evidence.model_validate(
                     {
                         **item,
                         "verified": verified,
+                        "verificationStatus": status,
+                        "verificationReason": reason,
                     }
                 )
             )
@@ -88,19 +108,26 @@ class RuleEvidenceVerifier:
             "id": str(raw.get("id") or "ev-unknown"),
             "sourceTitle": raw.get("sourceTitle") or raw.get("title") or "Untitled",
             "sourceUri": raw.get("sourceUri") or raw.get("url") or "",
+            "canonicalUri": raw.get("canonicalUri"),
+            "finalUri": raw.get("finalUri"),
             "quotedText": raw.get("quotedText") or raw.get("snippet") or "",
             "sourceType": raw.get("sourceType") or "WEB",
             "documentId": raw.get("documentId"),
             "chunkId": raw.get("chunkId"),
             "verified": bool(raw.get("verified")),
+            "verificationStatus": raw.get("verificationStatus") or "CANDIDATE",
+            "verificationReason": raw.get("verificationReason"),
+            "retrievedAt": raw.get("retrievedAt"),
+            "contentHash": raw.get("contentHash"),
+            "httpStatus": raw.get("httpStatus"),
         }
 
 
 def default_verifier() -> RuleEvidenceVerifier:
     """按运行配置构造默认规则核验器。"""
     settings = get_settings()
-    # 仅显式 mock 模式允许 SYNTHETIC 通过，避免生产漏配 Key 时假 verified
-    return RuleEvidenceVerifier(allow_synthetic=bool(settings.agent_mock_llm))
+    # 合成数据仅用于显式测试/演示，永远不进入已核验证据集合。
+    return RuleEvidenceVerifier(allow_synthetic=settings.synthetic_allowed())
 
 
 def merge_evidence(state: ResearchState) -> dict[str, Any]:

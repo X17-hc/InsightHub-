@@ -15,6 +15,7 @@ public record PlanRevisionResponse(
         String revisionInstruction,
         String createdBy,
         String approvedBy,
+        String approvalRemark,
         LocalDateTime createdAt,
         LocalDateTime approvedAt
 ) {}

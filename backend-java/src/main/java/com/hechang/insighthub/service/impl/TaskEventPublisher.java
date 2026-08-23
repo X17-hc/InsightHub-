@@ -1,19 +1,19 @@
 package com.hechang.insighthub.service.impl;
 
-import jakarta.annotation.Resource;
-
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.event.TransactionPhase;
 import org.springframework.transaction.event.TransactionalEventListener;
 
 import com.hechang.insighthub.redis.TaskControlRedis;
+import lombok.RequiredArgsConstructor;
 
 /** Publishes persisted server events only after their surrounding business transaction commits. */
 @Component
+@RequiredArgsConstructor
 public class TaskEventPublisher {
 
-    @Resource private TaskControlRedis taskControlRedis;
-    @Resource private TaskEventSseHub sseHub;
+    private final TaskControlRedis taskControlRedis;
+    private final TaskEventSseHub sseHub;
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     public void publish(TaskEventPublished event) {

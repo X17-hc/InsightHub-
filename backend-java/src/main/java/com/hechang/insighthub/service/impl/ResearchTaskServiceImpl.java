@@ -10,7 +10,6 @@ import java.util.concurrent.RejectedExecutionException;
 
 import com.hechang.insighthub.model.dto.task.*;
 import com.hechang.insighthub.service.PlanApplicationService;
-import jakarta.annotation.Resource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -24,85 +23,65 @@ import com.hechang.insighthub.exception.BusinessException;
 import com.hechang.insighthub.exception.ErrorCode;
 import com.hechang.insighthub.integration.AgentServiceClient;
 import com.hechang.insighthub.mapper.KnowledgeBaseMapper;
+import com.hechang.insighthub.mapper.CitationMapper;
 import com.hechang.insighthub.mapper.ResearchTaskMapper;
+import com.hechang.insighthub.mapper.ReportMapper;
+import com.hechang.insighthub.mapper.TaskDispatchOutboxMapper;
+import com.hechang.insighthub.mapper.TaskEventMapper;
+import com.hechang.insighthub.mapper.TaskPlanRevisionMapper;
 import com.hechang.insighthub.model.dto.knowledge.CitationResponse;
 import com.hechang.insighthub.model.entity.KnowledgeBase;
 import com.mybatisflex.core.query.QueryWrapper;
 import com.hechang.insighthub.model.entity.ResearchTask;
 import com.hechang.insighthub.model.enums.TaskStatus;
+import com.hechang.insighthub.model.enums.QualityStatus;
 import com.hechang.insighthub.model.enums.WorkspaceRole;
 import com.hechang.insighthub.redis.TaskControlRedis;
 import com.hechang.insighthub.redis.TaskCreateRateLimiter;
 import com.hechang.insighthub.redis.TaskSlotTracker;
 import com.hechang.insighthub.redis.WorkspaceConcurrencyService;
 import com.hechang.insighthub.service.ResearchTaskService;
+import com.hechang.insighthub.service.ResearchTaskQueryService;
 import com.hechang.insighthub.service.TaskExecutionService;
+import com.hechang.insighthub.service.TaskResultService;
 import com.hechang.insighthub.service.WorkspaceAccessService;
 import com.hechang.insighthub.service.CurrentWorkspaceAccess;
 import com.mybatisflex.spring.service.impl.ServiceImpl;
+import lombok.RequiredArgsConstructor;
 
 /**
  * 研究任务：异步流式 + 同步兼容 + 控制面实现。
  */
 @Service
+@RequiredArgsConstructor
 public class ResearchTaskServiceImpl extends ServiceImpl<ResearchTaskMapper, ResearchTask>
         implements ResearchTaskService {
 
     private static final Logger log = LoggerFactory.getLogger(ResearchTaskServiceImpl.class);
 
-    @Resource
-    private AgentServiceClient agentServiceClient;
-
-    @Resource
-    private KnowledgeBaseMapper knowledgeBaseMapper;
-
-    @Resource
-    private WorkspaceAccessService accessService;
-
-    @Resource
-    private TaskStateMachine stateMachine;
-
-    @Resource
-    private TransactionTemplate transactionTemplate;
-
-    @Resource
-    private TaskExecutionService taskExecutionService;
-
-    @Resource
-    private TaskControlRedis taskControlRedis;
-
-    @Resource
-    private WorkspaceConcurrencyService concurrencyService;
-
-    @Resource
-    private TaskSlotTracker slotTracker;
-
-    @Resource
-    private TaskCreateRateLimiter rateLimiter;
-
-    @Resource
-    private TaskEventSseHub sseHub;
-
-    @Resource
-    private TaskStreamLease streamLease;
-
-    @Resource
-    private TaskProperties taskProperties;
-
-    @Resource
-    private ObjectMapper objectMapper;
-
-    @Resource
-    private TaskResultService taskResultService;
-
-    @Resource
-    private TaskEventService taskEventService;
-
-    @Resource
-    private ResearchTaskQueryService taskQueryService;
-
-    @Resource
-    private PlanApplicationService planApplicationService;
+    private final AgentServiceClient agentServiceClient;
+    private final KnowledgeBaseMapper knowledgeBaseMapper;
+    private final CitationMapper citationMapper;
+    private final ReportMapper reportMapper;
+    private final TaskEventMapper taskEventMapper;
+    private final TaskDispatchOutboxMapper taskDispatchOutboxMapper;
+    private final TaskPlanRevisionMapper taskPlanRevisionMapper;
+    private final WorkspaceAccessService accessService;
+    private final TaskStateMachine stateMachine;
+    private final TransactionTemplate transactionTemplate;
+    private final TaskExecutionService taskExecutionService;
+    private final TaskControlRedis taskControlRedis;
+    private final WorkspaceConcurrencyService concurrencyService;
+    private final TaskSlotTracker slotTracker;
+    private final TaskCreateRateLimiter rateLimiter;
+    private final TaskEventSseHub sseHub;
+    private final TaskStreamLease streamLease;
+    private final TaskProperties taskProperties;
+    private final ObjectMapper objectMapper;
+    private final TaskResultService taskResultService;
+    private final TaskEventService taskEventService;
+    private final ResearchTaskQueryService taskQueryService;
+    private final PlanApplicationService planApplicationService;
 
 
 
@@ -193,7 +172,7 @@ public class ResearchTaskServiceImpl extends ServiceImpl<ResearchTaskMapper, Res
                         advance(taskId, workspaceId, TaskStatus.PLANNING, TaskStatus.RUNNING, 30, "dispatch_tasks");
                         advance(taskId, workspaceId, TaskStatus.RUNNING, TaskStatus.GENERATING, 80, "write_report");
                         taskResultService.saveReportAndCitations(
-                                taskId, workspaceId, response.getReportMarkdown(), response.getCitations());
+                                taskId, workspaceId, response.getReportMarkdown(), response.getCitations(), response.getQuality());
                         advance(taskId, workspaceId, TaskStatus.GENERATING, TaskStatus.COMPLETED, 100, "finalize");
                         mapper.updateTaskFinished(
                                 taskId, workspaceId, TaskStatus.COMPLETED.name(), response.getRunId(), null, null);
@@ -243,6 +222,28 @@ public class ResearchTaskServiceImpl extends ServiceImpl<ResearchTaskMapper, Res
     }
 
     @Override
+    public void delete(String workspaceId, String taskId) {
+        CurrentWorkspaceAccess actor = accessService.requireCurrentMember(workspaceId);
+        requireControllableTask(workspaceId, taskId, actor);
+        transactionTemplate.executeWithoutResult(tx -> {
+            ResearchTask locked = requireTaskForUpdate(workspaceId, taskId);
+            if (!TaskStatus.isTerminal(locked.getStatus())) {
+                throw BusinessException.conflict("TASK_NOT_TERMINAL", "only completed, failed, or cancelled tasks may be deleted");
+            }
+            citationMapper.deleteByTaskId(taskId);
+            reportMapper.deleteByTaskId(taskId);
+            taskEventMapper.deleteByTaskId(taskId);
+            taskDispatchOutboxMapper.deleteByTaskId(taskId);
+            taskPlanRevisionMapper.deleteByTaskId(taskId);
+            mapper.deleteCheckpointsByTaskId(taskId);
+            if (mapper.deleteByIdAndWorkspace(taskId, workspaceId) != 1) {
+                throw BusinessException.conflict("TASK_STATE_CHANGED", "task changed while deleting");
+            }
+        });
+        sseHub.completeTask(taskId);
+    }
+
+    @Override
     public ReportResponse getReport(String workspaceId, String taskId) {
         return taskQueryService.getReport(workspaceId, taskId);
     }
@@ -260,6 +261,11 @@ public class ResearchTaskServiceImpl extends ServiceImpl<ResearchTaskMapper, Res
     @Override
     public List<CitationResponse> listCitations(String workspaceId, String taskId) {
         return taskQueryService.listCitations(workspaceId, taskId);
+    }
+
+    @Override
+    public List<CitationResponse> listCitations(String workspaceId, String taskId, int version) {
+        return taskQueryService.listCitations(workspaceId, taskId, version);
     }
 
     @Override
@@ -300,7 +306,13 @@ public class ResearchTaskServiceImpl extends ServiceImpl<ResearchTaskMapper, Res
         try {
             transactionTemplate.executeWithoutResult(tx -> {
                 ResearchTask locked = requireTaskForUpdate(workspaceId, taskId);
-                stateMachine.transition(TaskStatus.valueOf(locked.getStatus()), TaskStatus.RUNNING);
+                TaskStatus fromStatus = TaskStatus.valueOf(locked.getStatus());
+                boolean qualityRetry = fromStatus == TaskStatus.COMPLETED
+                        && ("FAIL".equals(locked.getQualityStatus()) || "LEGACY_SYNTHETIC".equals(locked.getQualityStatus()));
+                if (fromStatus != TaskStatus.FAILED && !qualityRetry) {
+                    throw BusinessException.conflict("TASK_NOT_RETRYABLE", "task has no failed quality result to retry");
+                }
+                stateMachine.transition(fromStatus, TaskStatus.RUNNING);
                 int updated = mapper.updateStatusIfCurrent(
                         taskId, workspaceId, TaskStatus.PAUSED.name(), TaskStatus.RUNNING.name(), null, null);
                 if (updated != 1) {
@@ -368,19 +380,23 @@ public class ResearchTaskServiceImpl extends ServiceImpl<ResearchTaskMapper, Res
         rateLimiter.acquire(actor.userId());
         int ttl = taskProperties.getDefaultTimeoutSeconds() + 600;
         String permitId = concurrencyService.tryAcquire(workspaceId, ttl);
-        if (permitId != null) {
-            slotTracker.markHeld(taskId, workspaceId, permitId, ttl);
-        }
-
         String runId = "run-" + UUID.randomUUID().toString().replace("-", "").substring(0, 12);
         try {
             slotTracker.markHeld(taskId, workspaceId, permitId, ttl);
             transactionTemplate.executeWithoutResult(tx -> {
                 ResearchTask locked = requireTaskForUpdate(workspaceId, taskId);
-                stateMachine.transition(TaskStatus.valueOf(locked.getStatus()), TaskStatus.RUNNING);
+                TaskStatus fromStatus = TaskStatus.valueOf(locked.getStatus());
+                boolean qualityRetry = fromStatus == TaskStatus.COMPLETED
+                        && ("FAIL".equals(locked.getQualityStatus())
+                        || "LEGACY_SYNTHETIC".equals(locked.getQualityStatus()));
+                if (fromStatus != TaskStatus.FAILED && !qualityRetry) {
+                    throw BusinessException.conflict(
+                            "TASK_NOT_RETRYABLE", "task has no failed quality result to retry");
+                }
+                stateMachine.transition(fromStatus, TaskStatus.RUNNING);
                 mapper.prepareRetry(taskId, workspaceId, runId);
                 int updated = mapper.updateStatusIfCurrent(
-                        taskId, workspaceId, TaskStatus.FAILED.name(), TaskStatus.RUNNING.name(), 30, "retry");
+                        taskId, workspaceId, fromStatus.name(), TaskStatus.RUNNING.name(), 30, "retry");
                 if (updated != 1) {
                     throw BusinessException.conflict("TASK_STATE_CHANGED", "task status changed while retrying");
                 }
@@ -425,6 +441,9 @@ public class ResearchTaskServiceImpl extends ServiceImpl<ResearchTaskMapper, Res
         task.setQuery(query);
         task.setStatus(TaskStatus.CREATED.name());
         task.setProgress(0);
+        task.setQualityStatus(QualityStatus.PENDING.name());
+        task.setVerifiedCitationCount(0);
+        task.setTotalCitationCount(0);
         task.setTraceId(traceId);
         task.setEnableDataAnalysis(enableDataAnalysis);
         try {

@@ -23,7 +23,8 @@ def task_result_line(*,
                      citations=None,
                      plan=None,
                      plan_hash=None,
-                     plan_revision=None):
+                     plan_revision=None,
+                     quality=None):
     return dumps_event({
         "schemaVersion": "1.0",
         "type": "TASK_RESULT",
@@ -35,5 +36,6 @@ def task_result_line(*,
         "planRevision": plan_revision,
         "reportMarkdown": report_markdown,
         "citations": citations or [],
+        "quality": quality,
         "error": error,
     })

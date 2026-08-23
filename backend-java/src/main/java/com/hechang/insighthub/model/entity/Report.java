@@ -37,6 +37,18 @@ public class Report {
     /** 状态：DRAFT/READY/ARCHIVED */
     private String status;
 
+    @Column("quality_status")
+    private String qualityStatus;
+
+    @Column("quality_summary")
+    private String qualitySummary;
+
+    @Column("verified_citation_count")
+    private Integer verifiedCitationCount;
+
+    @Column("candidate_citation_count")
+    private Integer candidateCitationCount;
+
     @Column(value = "created_at", onInsertValue = "now()")
     private LocalDateTime createdAt;
 

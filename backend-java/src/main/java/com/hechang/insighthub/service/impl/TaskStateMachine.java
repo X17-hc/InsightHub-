@@ -40,7 +40,7 @@ public class TaskStateMachine {
         transitions.put(TaskStatus.GENERATING, EnumSet.of(
                 TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED));
         transitions.put(TaskStatus.FAILED, EnumSet.of(TaskStatus.RUNNING));
-        transitions.put(TaskStatus.COMPLETED, EnumSet.noneOf(TaskStatus.class));
+        transitions.put(TaskStatus.COMPLETED, EnumSet.of(TaskStatus.RUNNING));
         transitions.put(TaskStatus.CANCELLED, EnumSet.noneOf(TaskStatus.class));
     }
 

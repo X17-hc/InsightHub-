@@ -64,6 +64,18 @@ public class ResearchTask {
     @Column("enable_data_analysis")
     private Boolean enableDataAnalysis;
 
+    @Column("quality_status")
+    private String qualityStatus;
+
+    @Column("quality_summary")
+    private String qualitySummary;
+
+    @Column("verified_citation_count")
+    private Integer verifiedCitationCount;
+
+    @Column("total_citation_count")
+    private Integer totalCitationCount;
+
     @Column("trace_id")
     private String traceId;
 

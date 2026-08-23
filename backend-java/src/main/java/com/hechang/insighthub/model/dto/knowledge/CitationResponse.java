@@ -25,5 +25,12 @@ public class CitationResponse {
     private String chunkId;
     private String quotedText;
     private Integer verified;
+    private String verificationStatus;
+    private String verificationReason;
+    private String canonicalUri;
+    private String finalUri;
+    private LocalDateTime retrievedAt;
+    private String contentHash;
+    private Integer httpStatus;
     private LocalDateTime createdAt;
 }

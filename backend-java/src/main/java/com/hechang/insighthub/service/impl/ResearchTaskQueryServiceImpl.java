@@ -1,6 +1,5 @@
 package com.hechang.insighthub.service.impl;
 
-import jakarta.annotation.Resource;
 import java.sql.Timestamp;
 import java.util.List;
 
@@ -20,30 +19,27 @@ import com.hechang.insighthub.model.entity.Citation;
 import com.hechang.insighthub.model.entity.Report;
 import com.hechang.insighthub.model.entity.ResearchTask;
 import com.hechang.insighthub.model.entity.TaskEvent;
+import com.hechang.insighthub.service.ResearchTaskQueryService;
 import com.hechang.insighthub.service.WorkspaceAccessService;
 import com.mybatisflex.core.query.QueryWrapper;
+import lombok.RequiredArgsConstructor;
 
 /** 研究任务的只读查询，隔离查询 Mapper 与任务控制、执行逻辑。 */
 @Service
-public class ResearchTaskQueryService {
+@RequiredArgsConstructor
+public class ResearchTaskQueryServiceImpl implements ResearchTaskQueryService {
 
-    @Resource
-    private ResearchTaskMapper researchTaskMapper;
-    @Resource
-    private ReportMapper reportMapper;
-    @Resource
-    private CitationMapper citationMapper;
-    @Resource
-    private TaskEventMapper taskEventMapper;
-    @Resource
-    private WorkspaceAccessService accessService;
-    @Resource
-    private TaskEventService taskEventService;
+    private final ResearchTaskMapper researchTaskMapper;
+    private final ReportMapper reportMapper;
+    private final CitationMapper citationMapper;
+    private final TaskEventMapper taskEventMapper;
+    private final WorkspaceAccessService accessService;
+    private final TaskEventService taskEventService;
 
     public List<TaskSummaryResponse> list(String workspaceId) {
         requireMembership(workspaceId);
         return researchTaskMapper.listByWorkspace(workspaceId).stream()
-                .map(ResearchTaskQueryService::toSummary)
+                .map(ResearchTaskQueryServiceImpl::toSummary)
                 .toList();
     }
 
@@ -55,62 +51,62 @@ public class ResearchTaskQueryService {
     public ReportResponse getReport(String workspaceId, String taskId) {
         requireMembership(workspaceId);
         requireTask(workspaceId, taskId);
-        Report report = reportMapper.selectOneByQuery(QueryWrapper.create()
-                .eq(Report::getTaskId, taskId)
-                .eq(Report::getWorkspaceId, workspaceId)
-                .orderBy(Report::getVersion, false)
-                .orderBy(Report::getCreatedAt, false)
-                .limit(1));
+        Report report = reportMapper.findLatestByTask(workspaceId, taskId);
         if (report == null) throw BusinessException.notFound("report not found");
         return new ReportResponse(
                 report.getId(), report.getTaskId(), report.getWorkspaceId(), report.getVersion(),
                 report.getTitle(), report.getMarkdownContent(), report.getStatus(),
+                report.getQualityStatus(), report.getQualitySummary(), report.getVerifiedCitationCount(),
+                report.getCandidateCitationCount(),
                 report.getCreatedAt(), report.getUpdatedAt());
     }
 
     public List<ReportVersionResponse> listReportVersions(String workspaceId, String taskId) {
         requireMembership(workspaceId);
         requireTask(workspaceId, taskId);
-        return reportMapper.selectListByQuery(QueryWrapper.create()
-                .eq(Report::getTaskId, taskId).eq(Report::getWorkspaceId, workspaceId)
-                .orderBy(Report::getVersion, false)).stream()
+        return reportMapper.listByTask(workspaceId, taskId).stream()
                 .map(report -> new ReportVersionResponse(report.getId(), report.getVersion(), report.getTitle(),
-                        report.getStatus(), report.getCreatedAt(), report.getUpdatedAt()))
+                        report.getStatus(), report.getQualityStatus(), report.getQualitySummary(),
+                        value(report.getVerifiedCitationCount()), value(report.getCandidateCitationCount()),
+                        report.getCreatedAt(), report.getUpdatedAt()))
                 .toList();
     }
 
     public ReportResponse getReportVersion(String workspaceId, String taskId, int version) {
         requireMembership(workspaceId);
         requireTask(workspaceId, taskId);
-        Report report = reportMapper.selectOneByQuery(QueryWrapper.create()
-                .eq(Report::getTaskId, taskId).eq(Report::getWorkspaceId, workspaceId)
-                .eq(Report::getVersion, version));
+        Report report = reportMapper.findByTaskAndVersion(workspaceId, taskId, version);
         if (report == null) throw BusinessException.notFound("report version not found");
         return new ReportResponse(report.getId(), report.getTaskId(), report.getWorkspaceId(), report.getVersion(),
-                report.getTitle(), report.getMarkdownContent(), report.getStatus(), report.getCreatedAt(), report.getUpdatedAt());
+                report.getTitle(), report.getMarkdownContent(), report.getStatus(),
+                report.getQualityStatus(), report.getQualitySummary(), report.getVerifiedCitationCount(),
+                report.getCandidateCitationCount(), report.getCreatedAt(), report.getUpdatedAt());
     }
 
     public List<CitationResponse> listCitations(String workspaceId, String taskId) {
         requireMembership(workspaceId);
         requireTask(workspaceId, taskId);
-        Report latest = reportMapper.selectOneByQuery(QueryWrapper.create()
-                .eq(Report::getTaskId, taskId).eq(Report::getWorkspaceId, workspaceId)
-                .orderBy(Report::getVersion, false).limit(1));
+        Report latest = reportMapper.findLatestByTask(workspaceId, taskId);
         if (latest == null) return List.of();
-        return citationMapper.selectListByQuery(QueryWrapper.create()
-                .eq(Citation::getReportId, latest.getId())
-                .orderBy(Citation::getCitationNo, true)).stream()
-                .map(ResearchTaskQueryService::toCitationResponse)
+        return citationMapper.listByReportId(latest.getId()).stream()
+                .map(ResearchTaskQueryServiceImpl::toCitationResponse)
+                .toList();
+    }
+
+    public List<CitationResponse> listCitations(String workspaceId, String taskId, int version) {
+        requireMembership(workspaceId);
+        requireTask(workspaceId, taskId);
+        Report report = reportMapper.findByTaskAndVersion(workspaceId, taskId, version);
+        if (report == null) throw BusinessException.notFound("report version not found");
+        return citationMapper.listByReportId(report.getId()).stream()
+                .map(ResearchTaskQueryServiceImpl::toCitationResponse)
                 .toList();
     }
 
     public List<TaskEventResponse> listEvents(String workspaceId, String taskId, long fromEventNo) {
         requireMembership(workspaceId);
         requireTask(workspaceId, taskId);
-        return taskEventMapper.selectListByQuery(QueryWrapper.create()
-                .eq(TaskEvent::getTaskId, taskId)
-                .gt(TaskEvent::getEventNo, Math.max(0L, fromEventNo))
-                .orderBy(TaskEvent::getEventNo, true)).stream()
+        return taskEventMapper.listAfterEventNo(taskId, fromEventNo).stream()
                 .map(row -> taskEventService.toResponse(taskId, row))
                 .toList();
     }
@@ -129,7 +125,10 @@ public class ResearchTaskQueryService {
         return new CitationResponse(
                 citation.getId(), citation.getReportId(), citation.getTaskId(), citation.getCitationNo(),
                 citation.getSourceTitle(), citation.getSourceUri(), citation.getSourceType(), citation.getDocumentId(),
-                citation.getChunkId(), citation.getQuotedText(), citation.getVerified(), citation.getCreatedAt());
+                citation.getChunkId(), citation.getQuotedText(), citation.getVerified(),
+                citation.getVerificationStatus(), citation.getVerificationReason(), citation.getCanonicalUri(),
+                citation.getFinalUri(), citation.getRetrievedAt(), citation.getContentHash(), citation.getHttpStatus(),
+                citation.getCreatedAt());
     }
 
     private static TaskSummaryResponse toSummary(ResearchTask row) {
@@ -144,7 +143,16 @@ public class ResearchTaskQueryService {
         response.setRunId(row.getCurrentRunId());
         response.setErrorCode(row.getErrorCode());
         response.setErrorMessage(row.getErrorMessage());
+        response.setQualityStatus(row.getQualityStatus());
+        response.setQualitySummary(row.getQualitySummary());
+        response.setVerifiedCitationCount(value(row.getVerifiedCitationCount()));
+        response.setTotalCitationCount(value(row.getTotalCitationCount()));
+        response.setEnableDataAnalysis(Boolean.TRUE.equals(row.getEnableDataAnalysis()));
         if (row.getCreatedAt() != null) response.setCreatedAt(Timestamp.valueOf(row.getCreatedAt()));
         return response;
+    }
+
+    private static int value(Integer input) {
+        return input == null ? 0 : input;
     }
 }

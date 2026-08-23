@@ -16,7 +16,7 @@ from app.agents.evidence_verifier import merge_evidence
 from app.agents.knowledge_researcher import knowledge_research
 from app.agents.planner import create_plan
 from app.agents.researcher import web_research
-from app.agents.supervisor import dispatch_tasks
+from app.agents.supervisor import dispatch_tasks, execute_plan
 from app.agents.writer import finalize, write_report
 from app.agents.data_analysis import data_analysis
 from app.core.config import get_settings
@@ -138,6 +138,7 @@ def build_graph(checkpointer: BaseCheckpointSaver[Any] | None = None):
     graph.add_node("create_plan", create_plan)
     graph.add_node("wait_for_approval", wait_for_approval)
     graph.add_node("dispatch_tasks", dispatch_tasks)
+    graph.add_node("execute_plan", execute_plan)
     graph.add_node("knowledge_research", knowledge_research)
     graph.add_node("web_research", web_research)
     graph.add_node("merge_evidence", merge_evidence)
@@ -153,11 +154,9 @@ def build_graph(checkpointer: BaseCheckpointSaver[Any] | None = None):
     graph.add_conditional_edges(
         "wait_for_approval", _route_after_node, {"stop": END, "continue": "dispatch_tasks"})
     graph.add_conditional_edges(
-        "dispatch_tasks", _route_after_node, {"stop": END, "continue": "knowledge_research"})
+        "dispatch_tasks", _route_after_node, {"stop": END, "continue": "execute_plan"})
     graph.add_conditional_edges(
-        "knowledge_research", _route_after_node, {"stop": END, "continue": "web_research"})
-    graph.add_conditional_edges(
-        "web_research", _route_after_node, {"stop": END, "continue": "merge_evidence"})
+        "execute_plan", _route_after_node, {"stop": END, "continue": "merge_evidence"})
     graph.add_conditional_edges(
         "merge_evidence", _route_after_node, {"stop": END, "continue": "critic_review"})
     graph.add_conditional_edges(
@@ -168,7 +167,7 @@ def build_graph(checkpointer: BaseCheckpointSaver[Any] | None = None):
     graph.add_conditional_edges(
         "supplement_research",
         _route_after_node,
-        {"stop": END, "continue": "knowledge_research"},
+        {"stop": END, "continue": "execute_plan"},
     )
     graph.add_conditional_edges("data_analysis", _route_after_node, {"stop": END, "continue": "write_report"})
     graph.add_conditional_edges(

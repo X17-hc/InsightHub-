@@ -10,6 +10,7 @@ const props = defineProps<{
   isCreator: boolean
   actionLoading: '' | 'approve' | 'revise'
   historyCount: number
+  taskStates?: Record<string, string>
 }>()
 
 defineEmits<{
@@ -33,7 +34,7 @@ const isWaiting = () => props.taskStatus === 'WAITING_APPROVAL'
               {{ planStatusMeta[plan.status]?.label || plan.status }}
             </a-tag>
           </div>
-          <p v-if="plan">修订版 {{ plan.revisionNo }} · {{ formatDate(plan.createdAt) }}</p>
+          <p v-if="plan">{{ plan.revisionNo === 1 ? '版本 1' : `修订版 ${plan.revisionNo}` }} · {{ formatDate(plan.createdAt) }}</p>
           <p v-else-if="loading">Planner 正在整理研究路径。</p>
           <p v-else>查看 Agent 将如何完成这项研究。</p>
         </div>
@@ -59,6 +60,8 @@ const isWaiting = () => props.taskStatus === 'WAITING_APPROVAL'
           <span>研究目标</span>
           <p>{{ plan.plan.objective }}</p>
         </div>
+        <div v-if="plan.plan.researchDimensions?.length" class="plan-requirements"><strong>研究维度</strong><span v-for="dimension in plan.plan.researchDimensions" :key="dimension">{{ dimension }}</span></div>
+        <div v-if="plan.plan.sourceRequirements" class="plan-source-rule">来源要求：至少 {{ plan.plan.sourceRequirements.minVerifiedSources }} 个已核验来源<span v-if="plan.plan.sourceRequirements.requireOfficialSources">，且包含官方来源</span></div>
         <div class="plan-steps" aria-label="计划任务">
           <article v-for="(item, index) in plan.plan.tasks" :key="item.id" class="plan-step">
             <div class="plan-step-marker">{{ index + 1 }}</div>
@@ -67,6 +70,7 @@ const isWaiting = () => props.taskStatus === 'WAITING_APPROVAL'
                 <BookOpen v-if="item.type === 'knowledge_research'" :size="14" />
                 <Globe2 v-else :size="14" />
                 <span>{{ researchTaskTypeLabel(item.type) }}</span>
+                <a-tag v-if="taskStates?.[item.id]" size="small">{{ taskStates[item.id] }}</a-tag>
               </div>
               <p>{{ item.description }}</p>
               <small v-if="item.dependsOn?.length">依赖：{{ item.dependsOn.join('、') }}</small>
@@ -118,6 +122,7 @@ const isWaiting = () => props.taskStatus === 'WAITING_APPROVAL'
 .plan-objective { margin: 15px 0 18px; padding: 13px 14px; border: 1px solid #dcebe2; border-radius: 7px; background: #f4f9f6; }
 .plan-objective span { color: #4b7e68; font-size: 10px; font-weight: 700; letter-spacing: .06em; }
 .plan-objective p { margin: 6px 0 0; color: #60776b; font-size: 12px; line-height: 1.7; overflow-wrap: anywhere; }
+.plan-requirements { display: flex; flex-wrap: wrap; gap: 6px; margin: -7px 0 10px; align-items: center; font-size: 10px; color: #637a6d; }.plan-requirements strong { margin-right: 2px; }.plan-requirements span { padding: 3px 7px; border-radius: 10px; background: #edf5f0; }.plan-source-rule { margin-bottom: 14px; color: #778b80; font-size: 10px; }
 .plan-steps { display: grid; }
 .plan-step { position: relative; display: grid; grid-template-columns: 26px minmax(0, 1fr); gap: 10px; padding-bottom: 13px; }
 .plan-step:not(:last-child)::before { content: ''; position: absolute; left: 12px; top: 26px; bottom: 0; border-left: 1px solid #dce9e1; }

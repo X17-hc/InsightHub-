@@ -1,10 +1,9 @@
 import { fileURLToPath, URL } from 'node:url'
-import react from '@vitejs/plugin-react'
 import vue from '@vitejs/plugin-vue'
 import { defineConfig } from 'vite'
 
 export default defineConfig({
-  plugins: [vue(), react()],
+  plugins: [vue()],
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),
@@ -19,11 +18,10 @@ export default defineConfig({
       },
     },
   },
-  // 本机 node_modules 存在重解析点：全面 discovery 时 esbuild 易读到乱码。
-  // 仍需预构建 react/react-dom，否则浏览器无法从 CJS client.js 做 ESM 命名导入。
+  // Ant Design Vue 的日期组件会按默认导入使用 Day.js 的 UMD 插件。
+  // 显式预构建可将其转换为开发服务器可消费的 ESM，避免路由懒加载失败。
   optimizeDeps: {
-    noDiscovery: true,
-    include: ['react', 'react-dom', 'react/jsx-runtime', 'performative-ui'],
+    include: ['dayjs', 'dayjs/plugin/advancedFormat'],
   },
   build: {
     target: 'esnext',

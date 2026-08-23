@@ -123,8 +123,9 @@ CREATE INDEX idx_research_evidence_chunk
 -- -----------------------------------------------------------------------------
 -- 3. 分析产物元数据（图表/表格文件索引）
 -- -----------------------------------------------------------------------------
-DROP TABLE IF EXISTS analysis_artifact CASCADE;
-CREATE TABLE analysis_artifact (
+-- 该表保存已生成的分析产物。初始化脚本可能随已有数据卷再次被执行，
+-- 因此不能用 DROP TABLE，否则会删除用户可下载的历史产物。
+CREATE TABLE IF NOT EXISTS analysis_artifact (
   id              VARCHAR(64) PRIMARY KEY,
   task_id         VARCHAR(64) NOT NULL,
   workspace_id    VARCHAR(64) NOT NULL,
@@ -153,7 +154,7 @@ COMMENT ON COLUMN analysis_artifact.status IS '运行状态：SUCCESS/FAILED/TIM
 COMMENT ON COLUMN analysis_artifact.metadata_json IS '扩展元数据';
 COMMENT ON COLUMN analysis_artifact.created_at IS '创建时间';
 
-CREATE INDEX idx_analysis_artifact_task
+CREATE INDEX IF NOT EXISTS idx_analysis_artifact_task
   ON analysis_artifact (task_id);
 
 -- -----------------------------------------------------------------------------

@@ -32,10 +32,12 @@ class ResearchState(TypedDict, total=False):
     evidence: list[dict[str, Any]]
     analysis_artifacts: list[dict[str, Any]]
     critique: dict[str, Any] | None
+    quality: dict[str, Any] | None
     report: str | None
     step_count: int
     retry_count: int
     max_steps: int
+    max_parallelism: int
     # 已完成的 Critic 轮次（每次 critic_review 结束后 +1）
     critic_round: int
     max_critic_rounds: int

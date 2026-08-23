@@ -1,6 +1,5 @@
 package com.hechang.insighthub.service.impl;
 
-import jakarta.annotation.Resource;
 import java.time.LocalDateTime;
 
 import org.springframework.scheduling.annotation.Async;
@@ -15,6 +14,7 @@ import com.hechang.insighthub.redis.TaskSlotTracker;
 import com.hechang.insighthub.redis.WorkspaceConcurrencyService;
 import com.hechang.insighthub.service.TaskDispatchCommand;
 import com.hechang.insighthub.service.TaskExecutionService;
+import lombok.RequiredArgsConstructor;
 
 /**
  * Asynchronous half of durable task dispatch.
@@ -24,17 +24,18 @@ import com.hechang.insighthub.service.TaskExecutionService;
  * recoverable on the next application start.</p>
  */
 @Component
+@RequiredArgsConstructor
 public class TaskDispatchExecutor {
 
-    @Resource private TaskDispatchOutboxMapper mapper;
-    @Resource private ObjectMapper objectMapper;
-    @Resource private TaskExecutionService taskExecutionService;
-    @Resource private ResearchTaskMapper researchTaskMapper;
-    @Resource private TaskSlotTracker slotTracker;
-    @Resource private WorkspaceConcurrencyService concurrencyService;
-    @Resource private TaskProperties taskProperties;
+    private final TaskDispatchOutboxMapper mapper;
+    private final ObjectMapper objectMapper;
+    private final TaskExecutionService taskExecutionService;
+    private final ResearchTaskMapper researchTaskMapper;
+    private final TaskSlotTracker slotTracker;
+    private final WorkspaceConcurrencyService concurrencyService;
+    private final TaskProperties taskProperties;
 
-    @Async("taskExecutor")
+    @Async("agentStreamExecutor")
     public void execute(String outboxId) {
         TaskDispatchOutbox row = mapper.selectOneById(outboxId);
         if (row == null || !"DISPATCHING".equals(row.getStatus())) {

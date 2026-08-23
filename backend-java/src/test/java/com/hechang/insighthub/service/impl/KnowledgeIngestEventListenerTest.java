@@ -15,6 +15,8 @@ class KnowledgeIngestEventListenerTest {
 
     @Mock
     private KnowledgeService knowledgeService;
+    @Mock
+    private KnowledgeChunkCleanupExecutor cleanupExecutor;
 
     @InjectMocks
     private KnowledgeIngestEventListener listener;
@@ -24,5 +26,12 @@ class KnowledgeIngestEventListenerTest {
         listener.handle(new DocumentIngestRequested("workspace-1", "kb-1", "doc-1"));
 
         verify(knowledgeService).ingestDocument("workspace-1", "kb-1", "doc-1");
+    }
+
+    @Test
+    void delegatesCommittedCleanupToTheDedicatedExecutor() {
+        listener.handle(new KnowledgeChunksDeleteRequested("workspace-1", "kb-1"));
+
+        verify(cleanupExecutor).deleteByKnowledgeBase("workspace-1", "kb-1");
     }
 }

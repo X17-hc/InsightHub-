@@ -41,4 +41,11 @@ describe('researchTaskApi plan endpoints', () => {
       { expectedRevision: 3, revision: '补充竞品定价研究' },
     )
   })
+
+  it('loads citations through the selected immutable report version', () => {
+    researchTaskApi.reportCitations('workspace-1', 'task-1', 4)
+    expect(mocks.get).toHaveBeenCalledWith(
+      '/v1/workspaces/workspace-1/research/tasks/task-1/reports/4/citations',
+    )
+  })
 })

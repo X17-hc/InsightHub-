@@ -1,4 +1,4 @@
-import type { CriticVerdict, PlanRevisionStatus, TaskStatus } from '@/types'
+import type { CriticVerdict, PlanRevisionStatus, QualityStatus, TaskStatus } from '@/types'
 export const taskStatusValues: TaskStatus[] = ['CREATED', 'PLANNING', 'WAITING_APPROVAL', 'RUNNING', 'PAUSING', 'PAUSED', 'REVIEWING', 'GENERATING', 'COMPLETED', 'FAILED', 'CANCELLED']
 export const taskStatusMeta: Record<TaskStatus, { label: string; color: string }> = {
   CREATED: { label: '已创建', color: 'default' }, PLANNING: { label: '规划中', color: 'blue' }, WAITING_APPROVAL: { label: '待确认', color: 'gold' }, RUNNING: { label: '运行中', color: 'blue' }, PAUSING: { label: '暂停中', color: 'gold' }, PAUSED: { label: '已暂停', color: 'gold' }, REVIEWING: { label: '复核中', color: 'cyan' }, GENERATING: { label: '生成报告', color: 'blue' }, COMPLETED: { label: '已完成', color: 'green' }, FAILED: { label: '失败', color: 'red' }, CANCELLED: { label: '已取消', color: 'default' },
@@ -8,7 +8,9 @@ export function isTerminalTaskStatus(status?: TaskStatus): boolean { return stat
 export function canPauseTask(status?: TaskStatus): boolean { return status === 'RUNNING' }
 export function canResumeTask(status?: TaskStatus): boolean { return status === 'PAUSED' }
 export function canCancelTask(status?: TaskStatus): boolean { return Boolean(status && !isTerminalTaskStatus(status)) }
-export function canRetryTask(status?: TaskStatus): boolean { return status === 'FAILED' }
+export function canRetryTask(status?: TaskStatus, quality?: QualityStatus): boolean {
+  return status === 'FAILED' || (status === 'COMPLETED' && (quality === 'FAIL' || quality === 'LEGACY_SYNTHETIC'))
+}
 export function canLoadReport(status?: TaskStatus): boolean { return status === 'GENERATING' || status === 'COMPLETED' }
 export function isActiveTask(status?: TaskStatus): boolean { return status === 'RUNNING' || status === 'PLANNING' || status === 'GENERATING' || status === 'PAUSING' }
 export const documentStatusMeta = { PENDING: { label: '等待解析', color: 'default' }, PARSING: { label: '解析中', color: 'blue' }, INDEXED: { label: '已索引', color: 'green' }, FAILED: { label: '解析失败', color: 'red' } } as const
@@ -25,6 +27,14 @@ export const criticVerdictMeta: Record<CriticVerdict, { label: string; tone: str
   PASS: { label: '证据已通过质量评审', tone: 'success' },
   SUPPLEMENT: { label: 'Critic 请求补充研究', tone: 'warning' },
   FAIL: { label: '证据不足，报告包含限制说明', tone: 'danger' },
+}
+
+export const qualityStatusMeta: Record<QualityStatus, { label: string; color: string }> = {
+  PENDING: { label: '待评审', color: 'blue' },
+  PASS: { label: '质量通过', color: 'green' },
+  FAIL: { label: '质量未通过', color: 'red' },
+  NOT_EVALUATED: { label: '未评估', color: 'default' },
+  LEGACY_SYNTHETIC: { label: '历史演示数据', color: 'orange' },
 }
 
 export function researchTaskTypeLabel(type?: string): string {

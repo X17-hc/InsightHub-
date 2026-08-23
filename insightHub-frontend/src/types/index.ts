@@ -49,6 +49,8 @@ export type TaskStatus =
   | 'FAILED'
   | 'CANCELLED'
 
+export type QualityStatus = 'PENDING' | 'PASS' | 'FAIL' | 'NOT_EVALUATED' | 'LEGACY_SYNTHETIC'
+
 export interface ResearchTask {
   taskId: string
   workspaceId: string
@@ -60,6 +62,11 @@ export interface ResearchTask {
   runId?: string
   errorCode?: string
   errorMessage?: string
+  qualityStatus: QualityStatus
+  qualitySummary?: string
+  verifiedCitationCount: number
+  totalCitationCount: number
+  enableDataAnalysis?: boolean
   createdAt: string
 }
 
@@ -98,6 +105,11 @@ export interface ResearchPlanTask {
 export interface ResearchPlan {
   title: string
   objective: string
+  researchDimensions?: string[]
+  sourceRequirements?: {
+    minVerifiedSources: number
+    requireOfficialSources: boolean
+  }
   tasks: ResearchPlanTask[]
 }
 
@@ -116,6 +128,7 @@ export interface PlanRevision {
   approvedBy?: string
   createdAt: string
   approvedAt?: string
+  approvalRemark?: string
 }
 
 export interface PlanActionResponse {
@@ -155,6 +168,10 @@ export interface Report {
   title: string
   markdownContent: string
   status: string
+  qualityStatus: QualityStatus
+  qualitySummary?: string
+  verifiedCitationCount: number
+  candidateCitationCount: number
   createdAt: string
   updatedAt: string
 }
@@ -164,6 +181,10 @@ export interface ReportVersion {
   version: number
   title: string
   status: string
+  qualityStatus: QualityStatus
+  qualitySummary?: string
+  verifiedCitationCount: number
+  candidateCitationCount: number
   createdAt: string
   updatedAt: string
 }
@@ -194,6 +215,13 @@ export interface Citation {
   chunkId?: string
   quotedText?: string
   verified: boolean | number
+  verificationStatus: 'VERIFIED' | 'CANDIDATE' | 'SYNTHETIC'
+  verificationReason?: string
+  canonicalUri?: string
+  finalUri?: string
+  retrievedAt?: string
+  contentHash?: string
+  httpStatus?: number
   createdAt: string
 }
 

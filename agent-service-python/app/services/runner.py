@@ -35,6 +35,17 @@ from app.schemas.protocol import AgentEvent, AgentTaskRequest, AgentTaskResponse
 
 logger = logging.getLogger(__name__)
 
+
+def _configuration_error() -> tuple[str, str] | None:
+    settings = get_settings()
+    if settings.synthetic_allowed():
+        return None
+    if settings.agent_mock_llm or not settings.deepseek_api_key.strip():
+        return "LLM_NOT_CONFIGURED", "LLM configuration is unavailable"
+    if settings.is_production() and not settings.tavily_api_key.strip():
+        return "SEARCH_NOT_CONFIGURED", "production search configuration is unavailable"
+    return None
+
 def _build_init_state(
     request,
     context,
@@ -61,10 +72,12 @@ def _build_init_state(
         "evidence": [],
         "analysis_artifacts": [],
         "critique": None,
+        "quality": None,
         "report": None,
         "step_count": 0,
         "retry_count": 0,
         "max_steps": request.config.max_steps,
+        "max_parallelism": request.config.max_parallelism,
         "critic_round": 0,
         "max_critic_rounds": request.config.max_critic_rounds,
         "verified_evidence_ids": [],
@@ -105,6 +118,14 @@ def run_research_task(request: AgentTaskRequest, trace_id: str | None = None) ->
             data={"traceId": trace, "query": request.query},
         )
     ]
+    configuration_error = _configuration_error()
+    if configuration_error:
+        code, message = configuration_error
+        failed = make_event(events=initial_events, task_id=request.task_id, run_id=run_id,
+                            event_type="TASK_FAILED", node=None, data={"code": code, "message": message})
+        return AgentTaskResponse(taskId=request.task_id, runId=run_id, status="FAILED", reportMarkdown=None,
+                                 events=[AgentEvent.model_validate(item) for item in initial_events + [failed]],
+                                 error=AgentError(code=code, message=message, traceId=trace))
     init_state = _build_init_state(request, context, initial_events)
 
     try:
@@ -131,13 +152,15 @@ def run_research_task(request: AgentTaskRequest, trace_id: str | None = None) ->
             error=AgentError(code="TASK_ALREADY_RUNNING", message=str(exc), traceId=trace),
         )
     except Exception as exc:  # noqa: BLE001
+        logger.error("graph execution failed taskId=%s traceId=%s errorType=%s",
+                     request.task_id, trace, type(exc).__name__)
         fail_event = make_event(
             events=initial_events,
             task_id=request.task_id,
             run_id=run_id,
             event_type="TASK_FAILED",
             node=None,
-            data={"message": str(exc)},
+            data={"code": "AGENT_EXECUTION_FAILED", "message": "agent execution failed"},
         )
         return AgentTaskResponse(
             taskId=request.task_id,
@@ -147,7 +170,7 @@ def run_research_task(request: AgentTaskRequest, trace_id: str | None = None) ->
             events=[AgentEvent.model_validate(e) for e in (initial_events + [fail_event])],
             error=AgentError(
                 code="AGENT_EXECUTION_FAILED",
-                message=str(exc),
+                message="agent execution failed",
                 traceId=trace,
             ),
         )
@@ -191,6 +214,15 @@ def stream_research_task(
     trace = context.trace_id
     timeout = context.timeout_seconds
     store = get_control_store()
+    configuration_error = _configuration_error()
+    if configuration_error:
+        code, message = configuration_error
+        failed = make_event(events=[], task_id=request.task_id, run_id=run_id,
+                            event_type="TASK_FAILED", node=None, data={"code": code, "message": message})
+        yield _dumps_event(failed)
+        yield _task_result_line(task_id=request.task_id, run_id=run_id, status="FAILED",
+                                report_markdown=None, error={"code": code, "message": message, "traceId": trace})
+        return
     # 仅在无控制字时初始化为 RUNNING，避免覆盖调用方已写入的 PAUSED/CANCELLED
     if not store.exists(request.task_id):
         store.set(request.task_id, CONTROL_RUNNING, ttl_seconds=timeout + 600)
@@ -490,14 +522,15 @@ def _stream_graph(
                 return
 
     except Exception as exc:  # noqa: BLE001
-        logger.exception("stream graph failed taskId=%s resume=%s", task_id, resume)
+        logger.error("stream graph failed taskId=%s resume=%s traceId=%s errorType=%s",
+                     task_id, resume, trace, type(exc).__name__)
         events = list((final_state or {}).get("events") or [])
         fail = make_event(
             events=events,
             task_id=task_id,
             run_id=run_id,
             event_type="TASK_FAILED",
-            data={"code": "AGENT_EXECUTION_FAILED", "message": str(exc)},
+            data={"code": "AGENT_EXECUTION_FAILED", "message": "agent execution failed"},
         )
         _persist_control_event(graph, config, fail, status="FAILED")
         yield _dumps_event(fail)
@@ -506,7 +539,7 @@ def _stream_graph(
             run_id=run_id,
             status="FAILED",
             report_markdown=None,
-            error={"code": "AGENT_EXECUTION_FAILED", "message": str(exc), "traceId": trace},
+            error={"code": "AGENT_EXECUTION_FAILED", "message": "agent execution failed", "traceId": trace},
         )
         return
 
@@ -556,6 +589,7 @@ def _stream_graph(
             report_markdown=report,
             error=None,
             citations=list(final_state.get("citations") or []),
+            quality=final_state.get("quality"),
         )
         return
 

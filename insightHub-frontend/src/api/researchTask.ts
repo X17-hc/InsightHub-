@@ -19,6 +19,7 @@ const base = (workspaceId: string) => `/v1/workspaces/${workspaceId}/research/ta
 export const researchTaskApi = {
   list: (workspaceId: string) => http.get<ResearchTask[]>(base(workspaceId)),
   get: (workspaceId: string, taskId: string) => http.get<ResearchTask>(`${base(workspaceId)}/${taskId}`),
+  delete: (workspaceId: string, taskId: string) => http.delete<void>(`${base(workspaceId)}/${taskId}`),
   create: (workspaceId: string, payload: { query: string; knowledgeBaseIds: string[]; enableDataAnalysis?: boolean }) => http.post<TaskAccepted>(base(workspaceId), payload),
   pause: (workspaceId: string, taskId: string) => http.post<TaskControl>(`${base(workspaceId)}/${taskId}/pause`),
   resume: (workspaceId: string, taskId: string) => http.post<TaskControl>(`${base(workspaceId)}/${taskId}/resume`),
@@ -33,6 +34,8 @@ export const researchTaskApi = {
   artifactContent: (workspaceId: string, taskId: string, artifactId: string, disposition: 'inline' | 'attachment') =>
     http.get<Blob>(`${base(workspaceId)}/${taskId}/artifacts/${artifactId}/content`, { params: { disposition }, responseType: 'blob' }),
   citations: (workspaceId: string, taskId: string) => http.get<Citation[]>(`${base(workspaceId)}/${taskId}/citations`),
+  reportCitations: (workspaceId: string, taskId: string, version: number) =>
+    http.get<Citation[]>(`${base(workspaceId)}/${taskId}/reports/${version}/citations`),
   currentPlan: (workspaceId: string, taskId: string) =>
     http.get<PlanRevision>(`${base(workspaceId)}/${taskId}/plan`),
   planHistory: (workspaceId: string, taskId: string) =>

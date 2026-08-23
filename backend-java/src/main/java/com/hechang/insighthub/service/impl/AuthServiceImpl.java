@@ -1,6 +1,5 @@
 package com.hechang.insighthub.service.impl;
 
-import jakarta.annotation.Resource;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -31,29 +30,27 @@ import com.hechang.insighthub.service.AuthService;
 import com.mybatisflex.core.query.QueryWrapper;
 import com.mybatisflex.spring.service.impl.ServiceImpl;
 import com.mybatisflex.core.update.UpdateChain;
+import lombok.RequiredArgsConstructor;
 
 /**
  * 注册 / 登录 / 刷新令牌实现。
  */
 @Service
+@RequiredArgsConstructor
 public class AuthServiceImpl extends ServiceImpl<SysUserMapper, SysUser> implements AuthService {
 
-    @Resource
-    private SysRefreshTokenMapper refreshTokenMapper;
-    @Resource
-    private PasswordEncoder passwordEncoder;
-    @Resource
-    private JwtService jwtService;
-    @Resource
-    private JwtProperties jwtProperties;
+    private final SysRefreshTokenMapper refreshTokenMapper;
+    private final PasswordEncoder passwordEncoder;
+    private final JwtService jwtService;
+    private final JwtProperties jwtProperties;
 
     @Override
     @Transactional
     public TokenResponse register(RegisterRequest request) {
-        if (count(QueryWrapper.create().eq(SysUser::getUsername, request.getUsername())) > 0) {
+        if (mapper.existsByUsername(request.getUsername())) {
             throw BusinessException.conflict("USERNAME_EXISTS", "username already exists");
         }
-        if (count(QueryWrapper.create().eq(SysUser::getEmail, request.getEmail())) > 0) {
+        if (mapper.existsByEmail(request.getEmail())) {
             throw BusinessException.conflict("EMAIL_EXISTS", "email already exists");
         }
         String userId = "user-" + UUID.randomUUID().toString().replace("-", "").substring(0, 16);
@@ -77,7 +74,7 @@ public class AuthServiceImpl extends ServiceImpl<SysUserMapper, SysUser> impleme
     @Override
     @Transactional
     public TokenResponse login(LoginRequest request) {
-        SysUser user = getOne(QueryWrapper.create().eq(SysUser::getUsername, request.getUsername()));
+        SysUser user = mapper.findByUsername(request.getUsername());
         if (user == null) {
             throw BusinessException.unauthorized("invalid username or password");
         }
@@ -98,8 +95,7 @@ public class AuthServiceImpl extends ServiceImpl<SysUserMapper, SysUser> impleme
     @Transactional
     public TokenResponse refresh(String refreshToken) {
         String hash = sha256(refreshToken);
-        SysRefreshToken row = refreshTokenMapper.selectOneByQuery(
-                QueryWrapper.create().eq(SysRefreshToken::getTokenHash, hash));
+        SysRefreshToken row = refreshTokenMapper.findByTokenHash(hash);
         if (row == null) {
             throw BusinessException.unauthorized("invalid refresh token");
         }

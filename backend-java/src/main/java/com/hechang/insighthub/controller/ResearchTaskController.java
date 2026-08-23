@@ -9,6 +9,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.http.ContentDisposition;
 import java.nio.charset.StandardCharsets;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -18,13 +19,14 @@ import org.springframework.web.bind.annotation.RequestParam;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
+import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody;
 
 import com.hechang.insighthub.common.BaseResponse;
 import com.hechang.insighthub.common.ResultUtils;
 import com.hechang.insighthub.model.dto.knowledge.CitationResponse;
+import com.hechang.insighthub.service.AnalysisArtifactService;
+import com.hechang.insighthub.service.ReportExportService;
 import com.hechang.insighthub.service.ResearchTaskService;
-import com.hechang.insighthub.service.impl.ReportExportService;
-import com.hechang.insighthub.service.impl.AnalysisArtifactService;
 
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
@@ -76,6 +78,15 @@ public class ResearchTaskController {
             @PathVariable String workspaceId,
             @PathVariable String taskId) {
         return ResultUtils.success(researchTaskService.get(workspaceId, taskId));
+    }
+
+    @DeleteMapping("/{taskId}")
+    @Operation(summary = "删除已结束的研究任务及其任务数据")
+    public BaseResponse<Void> delete(
+            @PathVariable String workspaceId,
+            @PathVariable String taskId) {
+        researchTaskService.delete(workspaceId, taskId);
+        return ResultUtils.success(null);
     }
 
     @GetMapping("/{taskId}/report")
@@ -133,21 +144,31 @@ public class ResearchTaskController {
 
     @GetMapping("/{taskId}/artifacts/{artifactId}/content")
     @Operation(summary = "预览或下载分析产物")
-    public ResponseEntity<byte[]> artifactContent(@PathVariable String workspaceId, @PathVariable String taskId,
+    public ResponseEntity<StreamingResponseBody> artifactContent(@PathVariable String workspaceId, @PathVariable String taskId,
             @PathVariable String artifactId, @RequestParam(defaultValue = "inline") String disposition) {
         AnalysisArtifactService.ArtifactContent content = analysisArtifactService.content(workspaceId, taskId, artifactId);
         boolean attachment = "attachment".equalsIgnoreCase(disposition);
-        return ResponseEntity.ok().contentType(content.type()).contentLength(content.bytes().length)
+        return ResponseEntity.ok().contentType(content.type()).contentLength(content.contentLength())
                 .header("Content-Disposition", (attachment ? ContentDisposition.attachment() : ContentDisposition.inline())
-                        .filename(content.filename(), StandardCharsets.UTF_8).build().toString()).body(content.bytes());
+                        .filename(content.filename(), StandardCharsets.UTF_8).build().toString()).body(content.body());
     }
 
     @GetMapping("/{taskId}/citations")
-    @Operation(summary = "任务引用列表（结论可追溯来源）")
+    @Operation(summary = "最新报告引用列表（兼容接口）",
+            description = "兼容旧客户端；新客户端应使用带报告版本号的引用接口。")
     public BaseResponse<List<CitationResponse>> citations(
             @PathVariable String workspaceId,
             @PathVariable String taskId) {
         return ResultUtils.success(researchTaskService.listCitations(workspaceId, taskId));
+    }
+
+    @GetMapping("/{taskId}/reports/{version}/citations")
+    @Operation(summary = "指定不可变报告版本的引用列表")
+    public BaseResponse<List<CitationResponse>> reportCitations(
+            @PathVariable String workspaceId,
+            @PathVariable String taskId,
+            @PathVariable int version) {
+        return ResultUtils.success(researchTaskService.listCitations(workspaceId, taskId, version));
     }
 
     /**
