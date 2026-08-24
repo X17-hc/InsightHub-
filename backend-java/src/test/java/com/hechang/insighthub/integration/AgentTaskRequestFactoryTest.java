@@ -18,12 +18,14 @@ class AgentTaskRequestFactoryTest {
     @Test
     void streamRequestContainsTheSharedAgentContract() {
         Map<String, Object> request = factory.forStreamTask(
-                "task-1", "workspace-1", "user-1", "query", 120, 8L, List.of("kb-1"), true);
+                "task-1", "workspace-1", "user-1", "query", 120, 8L,
+                "run-retry", 2, List.of("kb-1"), true);
 
         @SuppressWarnings("unchecked")
         Map<String, Object> config = (Map<String, Object>) request.get("config");
         assertEquals("PLAN", request.get("phase"));
-        assertEquals(1, request.get("planRevision"));
+        assertEquals(2, request.get("planRevision"));
+        assertEquals("run-retry", request.get("runId"));
         assertEquals(List.of("kb-1"), request.get("knowledgeBaseIds"));
         assertTrue((Boolean) config.get("requirePlanApproval"));
         assertTrue((Boolean) config.get("enableDataAnalysis"));

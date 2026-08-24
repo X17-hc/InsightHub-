@@ -56,7 +56,9 @@ export class TaskEventSource {
       const event = { ...payload, eventId: eventNo, taskId: payload.taskId || this.taskId, type: payload.type || raw.type || 'message' } as TaskEvent
       this.onEvent(event)
       const status = (event.status || event.data?.status) as TaskStatus | undefined
-      if ((status && isTerminalTaskStatus(status)) || event.type === 'TASK_FAILED') this.close()
+      // TASK_FAILED is emitted before the persisted TASK_RESULT. Closing here would
+      // lose the canonical terminal envelope and leave the detail page stale.
+      if (status && isTerminalTaskStatus(status)) this.close()
     } catch { /* malformed heartbeat is intentionally ignored */ }
   }
   private reconnect(): void {

@@ -384,3 +384,107 @@ def test_evidence_model_frozen() -> None:
     )
     with pytest.raises(ValidationError):
         ev.verified = False  # type: ignore[misc]
+
+
+def test_real_critic_retries_invalid_json_and_ignores_unknown_fields(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.agents import critic as critic_mod
+
+    class _Settings:
+        deepseek_api_key = "test-key"
+
+        @staticmethod
+        def synthetic_allowed() -> bool:
+            return False
+
+    class _Response:
+        def __init__(self, content: str) -> None:
+            self.content = content
+
+    class _Model:
+        def __init__(self) -> None:
+            self.responses = iter(
+                [
+                    _Response("not-json"),
+                    _Response(
+                        '{"verdict":"pass","summary":"证据可用","gaps":[],"limitations":[],'
+                        '"supplementTasks":[],"unexpected":"ignored"}'
+                    ),
+                ]
+            )
+            self.calls = 0
+
+        def invoke(self, messages: object) -> _Response:
+            self.calls += 1
+            return next(self.responses)
+
+    model = _Model()
+    monkeypatch.setattr(critic_mod, "get_settings", lambda: _Settings())
+    monkeypatch.setattr(critic_mod, "get_chat_model", lambda **kwargs: model)
+    state = {
+        "task_id": "task-real-critic",
+        "run_id": "run-1",
+        "user_query": "研究主题",
+        "plan": {"sourceRequirements": {"minVerifiedSources": 3}, "tasks": []},
+        "evidence": [
+            {"id": f"e-{index}", "verified": True, "quotedText": "可核验证据正文"}
+            for index in range(3)
+        ],
+        "completed_tasks": [],
+        "events": [],
+        "step_count": 0,
+        "max_steps": 20,
+        "deadline_at": 9_999_999_999,
+        "critic_round": 1,
+        "max_critic_rounds": 2,
+        "knowledge_base_ids": [],
+        "status": "RUNNING",
+    }
+
+    result = critic_review(state)  # type: ignore[arg-type]
+
+    assert model.calls == 2
+    assert result["critique"]["verdict"] == "PASS"
+
+
+def test_real_critic_preserves_stable_error_after_bounded_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.agents import critic as critic_mod
+
+    class _Settings:
+        deepseek_api_key = "test-key"
+
+        @staticmethod
+        def synthetic_allowed() -> bool:
+            return False
+
+    class _Response:
+        content = "still-not-json"
+
+    class _Model:
+        def invoke(self, messages: object) -> _Response:
+            return _Response()
+
+    monkeypatch.setattr(critic_mod, "get_settings", lambda: _Settings())
+    monkeypatch.setattr(critic_mod, "get_chat_model", lambda **kwargs: _Model())
+    state = {
+        "task_id": "task-invalid-critic",
+        "run_id": "run-1",
+        "user_query": "研究主题",
+        "plan": {"tasks": []},
+        "evidence": [],
+        "completed_tasks": [],
+        "events": [],
+        "step_count": 0,
+        "max_steps": 20,
+        "deadline_at": 9_999_999_999,
+        "critic_round": 1,
+        "max_critic_rounds": 2,
+        "knowledge_base_ids": [],
+        "status": "RUNNING",
+    }
+
+    with pytest.raises(RuntimeError, match="CRITIC_RESPONSE_INVALID"):
+        critic_review(state)  # type: ignore[arg-type]

@@ -35,6 +35,20 @@ from app.schemas.protocol import AgentEvent, AgentTaskRequest, AgentTaskResponse
 
 logger = logging.getLogger(__name__)
 
+_STABLE_EXECUTION_ERRORS = {
+    "CRITIC_RESPONSE_INVALID": "critic response did not match the required schema",
+    "LLM_UNAVAILABLE": "LLM service is temporarily unavailable",
+    "LLM_NOT_CONFIGURED": "LLM configuration is unavailable",
+}
+
+
+def _classify_execution_failure(exception: Exception) -> tuple[str, str]:
+    """将允许公开的稳定异常分类映射到协议，其他异常继续使用通用错误。"""
+    raw_code = str(exception).strip().split(":", 1)[0]
+    if raw_code in _STABLE_EXECUTION_ERRORS:
+        return raw_code, _STABLE_EXECUTION_ERRORS[raw_code]
+    return "AGENT_EXECUTION_FAILED", "agent execution failed"
+
 
 def _configuration_error() -> tuple[str, str] | None:
     settings = get_settings()
@@ -152,15 +166,16 @@ def run_research_task(request: AgentTaskRequest, trace_id: str | None = None) ->
             error=AgentError(code="TASK_ALREADY_RUNNING", message=str(exc), traceId=trace),
         )
     except Exception as exc:  # noqa: BLE001
-        logger.error("graph execution failed taskId=%s traceId=%s errorType=%s",
-                     request.task_id, trace, type(exc).__name__)
+        code, message = _classify_execution_failure(exc)
+        logger.error("graph execution failed taskId=%s traceId=%s errorType=%s errorCode=%s",
+                     request.task_id, trace, type(exc).__name__, code)
         fail_event = make_event(
             events=initial_events,
             task_id=request.task_id,
             run_id=run_id,
             event_type="TASK_FAILED",
             node=None,
-            data={"code": "AGENT_EXECUTION_FAILED", "message": "agent execution failed"},
+            data={"code": code, "message": message},
         )
         return AgentTaskResponse(
             taskId=request.task_id,
@@ -169,8 +184,8 @@ def run_research_task(request: AgentTaskRequest, trace_id: str | None = None) ->
             reportMarkdown=None,
             events=[AgentEvent.model_validate(e) for e in (initial_events + [fail_event])],
             error=AgentError(
-                code="AGENT_EXECUTION_FAILED",
-                message="agent execution failed",
+                code=code,
+                message=message,
                 traceId=trace,
             ),
         )
@@ -522,15 +537,16 @@ def _stream_graph(
                 return
 
     except Exception as exc:  # noqa: BLE001
-        logger.error("stream graph failed taskId=%s resume=%s traceId=%s errorType=%s",
-                     task_id, resume, trace, type(exc).__name__)
+        code, message = _classify_execution_failure(exc)
+        logger.error("stream graph failed taskId=%s resume=%s traceId=%s errorType=%s errorCode=%s",
+                     task_id, resume, trace, type(exc).__name__, code)
         events = list((final_state or {}).get("events") or [])
         fail = make_event(
             events=events,
             task_id=task_id,
             run_id=run_id,
             event_type="TASK_FAILED",
-            data={"code": "AGENT_EXECUTION_FAILED", "message": "agent execution failed"},
+            data={"code": code, "message": message},
         )
         _persist_control_event(graph, config, fail, status="FAILED")
         yield _dumps_event(fail)
@@ -539,7 +555,7 @@ def _stream_graph(
             run_id=run_id,
             status="FAILED",
             report_markdown=None,
-            error={"code": "AGENT_EXECUTION_FAILED", "message": "agent execution failed", "traceId": trace},
+            error={"code": code, "message": message, "traceId": trace},
         )
         return
 

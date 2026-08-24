@@ -206,15 +206,16 @@ public class TaskEventSseHub {
         if (eventNo > 0) {
             session.lastSent.set(eventNo);
         }
-        // 仅在明确终态 TASK_RESULT 时关闭；TASK_COMPLETED 仍可能进入 GENERATING
-        if ("TASK_RESULT".equals(type)) {
-            Object status = map.get("status");
-            if (status != null && isTerminal(String.valueOf(status))) {
-                completeSession(session);
-            }
-        } else if ("TASK_FAILED".equals(type)) {
+        // TASK_FAILED precedes the persisted TASK_RESULT and is not the canonical terminal envelope.
+        if (isTerminalEnvelope(type, map.get("status"))) {
             completeSession(session);
         }
+    }
+
+    static boolean isTerminalEnvelope(String type, Object status) {
+        return "TASK_RESULT".equals(type)
+                && status != null
+                && isTerminal(String.valueOf(status));
     }
 
     private List<TaskEvent> listAfterEventNo(String taskId, long fromEventNo) {

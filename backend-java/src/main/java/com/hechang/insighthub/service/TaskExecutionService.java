@@ -14,6 +14,8 @@ public interface TaskExecutionService {
      * @param query       研究问题
      * @param traceId     链路追踪 ID
      * @param resume      是否为恢复（resume）调用
+     * @param runId       Java 分配的执行轮次；首次执行可为 null
+     * @param planRevision 本轮规划应生成的版本号
      */
     void executeStream(
             String taskId,
@@ -21,7 +23,9 @@ public interface TaskExecutionService {
             String userId,
             String query,
             String traceId,
-            boolean resume);
+            boolean resume,
+            String runId,
+            int planRevision);
 
     /**
      * Consume one durable outbox command.  The outbox executor, rather than

@@ -53,19 +53,23 @@ public class TaskExecutionServiceImpl implements TaskExecutionService {
             String userId,
             String query,
             String traceId,
-            boolean resume) {
-        executeStreamInternal(null, taskId, workspaceId, userId, query, traceId, resume);
+            boolean resume,
+            String runId,
+            int planRevision) {
+        executeStreamInternal(null, taskId, workspaceId, userId, query, traceId, resume, runId, planRevision);
     }
 
     @Override
     public void executeDispatch(com.hechang.insighthub.service.TaskDispatchCommand command) {
         executeStreamInternal(command, command.taskId(), command.workspaceId(), command.userId(),
-                command.query(), command.traceId(), "EXECUTE".equals(command.phase()));
+                command.query(), command.traceId(), "EXECUTE".equals(command.phase()),
+                command.runId(), command.planRevision());
     }
 
     private void executeStreamInternal(
             com.hechang.insighthub.service.TaskDispatchCommand command,
-            String taskId, String workspaceId, String userId, String query, String traceId, boolean resume) {
+            String taskId, String workspaceId, String userId, String query, String traceId, boolean resume,
+            String requestedRunId, int planRevision) {
         String generation = streamLease.acquire(taskId);
         AtomicInteger badLines = new AtomicInteger();
         try {
@@ -88,7 +92,7 @@ public class TaskExecutionServiceImpl implements TaskExecutionService {
                 } else {
                     String idem = taskId + "-stream-" + System.currentTimeMillis();
                     agentStreamClient.streamTask(taskId, workspaceId, userId, query, traceId, timeout,
-                            nextEventId <= 1 ? null : nextEventId, idem, kbIds,
+                            nextEventId <= 1 ? null : nextEventId, idem, requestedRunId, planRevision, kbIds,
                             currentTask != null && Boolean.TRUE.equals(currentTask.getEnableDataAnalysis()),
                             node -> handleLine(taskId, workspaceId, node, badLines, generation));
                 }

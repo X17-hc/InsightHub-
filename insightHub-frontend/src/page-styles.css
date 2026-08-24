@@ -72,3 +72,48 @@
 .unavailable-card > :not(.unavailable-glass-accent) { position: relative; z-index: 1; }
 .citation-item { padding: 13px 10px; border: 1px solid transparent; border-radius: 8px; transition: background .2s ease, border-color .2s ease, transform .2s ease; }
 .citation-item:hover { background: rgba(255,255,255,.74); border-color: var(--pui-panel-border); transform: translateY(-1px); }
+
+/* Responsive research layouts: reflow content instead of visually scaling text. */
+.task-create-page { max-width: 1480px; margin-inline: auto; }
+.task-create-page .create-grid { grid-template-columns: minmax(0, 1.55fr) minmax(280px, .85fr); }
+.task-create-page .create-main,
+.task-create-page .knowledge-picker,
+.task-create-page .kb-pick-row > div { min-width: 0; }
+.task-create-page .kb-pick-row strong { overflow-wrap: anywhere; }
+
+.detail-grid-week5 { grid-template-columns: minmax(270px, .85fr) minmax(400px, 1.45fr) minmax(320px, 1fr); }
+.quality-column { position: static; width: 100%; max-width: 100%; }
+.citation-heading { flex-wrap: wrap; }
+.citation-heading .event-count { margin-left: auto; }
+.citation-groups,
+.citation-groups > section,
+.citation-list,
+.citation-item { width: 100%; min-width: 0; max-width: 100%; }
+.citation-item { align-items: flex-start; }
+.citation-number { flex: 0 0 auto; }
+.citation-copy { flex: 1 1 0; width: 0; min-width: 0; max-width: 100%; }
+.citation-copy strong,
+.citation-copy p,
+.citation-uri,
+.verification-detail { white-space: normal; overflow-wrap: anywhere; word-break: break-word; }
+.citation-copy a { white-space: normal; overflow: visible; text-overflow: clip; overflow-wrap: anywhere; word-break: break-all; }
+
+@media (max-width: 1480px) and (min-width: 701px) {
+  .detail-grid-week5 { grid-template-columns: minmax(0, 1.35fr) minmax(290px, .85fr); }
+  .plan-activity-column { grid-column: 1 / -1; display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, .9fr); gap: 24px; }
+  .plan-activity-column > div:first-child .plan-panel { height: calc(100% - 22px); }
+}
+
+@media (max-width: 1050px) and (min-width: 701px) {
+  .plan-activity-column { display: block; }
+}
+
+@media (max-width: 880px) {
+  .task-create-page .create-grid { grid-template-columns: minmax(0, 1fr); }
+  .task-create-page .knowledge-picker { order: 2; }
+}
+
+@media (max-width: 700px) {
+  .task-create-page { max-width: none; }
+  .citation-copy { width: auto; }
+}

@@ -38,6 +38,61 @@ def _extract_json(text: str) -> dict[str, Any]:
         return json.loads(match.group(0))
 
 
+def _normalize_critique_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """只保留公开协议字段，并容忍模型常见的大小写和额外字段偏差。"""
+    raw_tasks = payload.get("supplementTasks", payload.get("supplement_tasks", []))
+    tasks: list[dict[str, Any]] = []
+    if isinstance(raw_tasks, list):
+        for item in raw_tasks[:2]:
+            if isinstance(item, dict):
+                tasks.append(
+                    {
+                        "id": item.get("id"),
+                        "type": item.get("type"),
+                        "description": item.get("description"),
+                    }
+                )
+    verdict = payload.get("verdict")
+    return {
+        "verdict": str(verdict).upper() if verdict is not None else verdict,
+        "summary": payload.get("summary") or "",
+        "gaps": payload.get("gaps") or [],
+        "limitations": payload.get("limitations") or [],
+        "supplementTasks": tasks,
+    }
+
+
+def _invoke_real_critique(state: ResearchState, payload: dict[str, Any]) -> CritiqueResult:
+    """在任务 deadline 内最多调用两次；协议仍不合格时失败关闭。"""
+    for attempt in range(2):
+        model = get_chat_model(
+            temperature=0.0,
+            timeout_seconds=remaining_seconds(state, 60),
+        )
+        instruction = _CRITIC_SYSTEM
+        if attempt:
+            instruction += "\n上一次响应未通过 JSON 协议校验。本次必须只返回格式完全匹配的 JSON 对象。"
+        try:
+            resp = model.invoke(
+                [
+                    SystemMessage(content=instruction),
+                    HumanMessage(content=json.dumps(payload, ensure_ascii=False)),
+                ]
+            )
+        except Exception as exc:  # noqa: BLE001 - 远程 LLM 故障仅允许一次有界重试
+            if attempt == 0:
+                continue
+            raise RuntimeError("LLM_UNAVAILABLE") from exc
+        try:
+            parsed = _extract_json(str(resp.content))
+            return CritiqueResult.model_validate(_normalize_critique_payload(parsed))
+        except Exception as exc:  # noqa: BLE001 - 不记录模型原文，避免泄露输入证据
+            if attempt == 0:
+                continue
+            raise RuntimeError("CRITIC_RESPONSE_INVALID") from exc
+    raise RuntimeError("CRITIC_RESPONSE_INVALID")
+
+
 def _evidence_summary(evidence: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """裁剪 Critic 输入：仅必要字段。"""
     out: list[dict[str, Any]] = []
@@ -276,7 +331,6 @@ def critic_review(state: ResearchState) -> dict[str, Any]:
     else:
         if not settings.deepseek_api_key.strip():
             raise RuntimeError("LLM_NOT_CONFIGURED")
-        model = get_chat_model(temperature=0.1, timeout_seconds=remaining_seconds(state, 60))
         payload = {
             "query": state.get("clarified_query") or state.get("user_query"),
             "plan": plan,
@@ -286,16 +340,7 @@ def critic_review(state: ResearchState) -> dict[str, Any]:
             "criticRound": prior_round + 1,
             "maxCriticRounds": max_rounds,
         }
-        try:
-            resp = model.invoke(
-                [
-                    SystemMessage(content=_CRITIC_SYSTEM),
-                    HumanMessage(content=json.dumps(payload, ensure_ascii=False)),
-                ]
-            )
-            critique = CritiqueResult.model_validate(_extract_json(str(resp.content)))
-        except Exception as exc:  # noqa: BLE001 - 协议/模型故障必须终止，禁止伪造质量结论
-            raise RuntimeError("CRITIC_RESPONSE_INVALID") from exc
+        critique = _invoke_real_critique(state, payload)
 
     if not can_supplement:
         critique = _force_terminal_verdict(critique)

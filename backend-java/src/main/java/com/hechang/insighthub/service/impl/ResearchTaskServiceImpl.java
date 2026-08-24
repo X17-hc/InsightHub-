@@ -103,7 +103,7 @@ public class ResearchTaskServiceImpl extends ServiceImpl<ResearchTaskMapper, Res
             insertCreatedTask(taskId, workspaceId, userId, query, traceId, kbIds, request.isEnableDataAnalysis());
             advance(taskId, workspaceId, TaskStatus.CREATED, TaskStatus.PLANNING, 10, "create_plan");
             taskControlRedis.setControl(taskId, TaskControlRedis.CONTROL_RUNNING, ttl);
-            taskExecutionService.executeStream(taskId, workspaceId, userId, query, traceId, false);
+            taskExecutionService.executeStream(taskId, workspaceId, userId, query, traceId, false, null, 1);
         } catch (RejectedExecutionException ex) {
             markFailedSync(taskId, workspaceId, "EXECUTOR_REJECTED", "task executor queue full");
             releaseTaskSlot(taskId, workspaceId);
@@ -328,7 +328,8 @@ public class ResearchTaskServiceImpl extends ServiceImpl<ResearchTaskMapper, Res
         taskControlRedis.setControl(taskId, TaskControlRedis.CONTROL_RUNNING, ttl);
         try {
             taskExecutionService.executeStream(
-                    taskId, workspaceId, row.getCreatorId(), row.getQuery(), row.getTraceId(), true);
+                    taskId, workspaceId, row.getCreatorId(), row.getQuery(), row.getTraceId(), true,
+                    row.getCurrentRunId(), 1);
         } catch (RejectedExecutionException ex) {
             // 回滚为 PAUSED，避免无 worker 的 RUNNING 脏状态
             taskControlRedis.setControl(
@@ -381,9 +382,10 @@ public class ResearchTaskServiceImpl extends ServiceImpl<ResearchTaskMapper, Res
         int ttl = taskProperties.getDefaultTimeoutSeconds() + 600;
         String permitId = concurrencyService.tryAcquire(workspaceId, ttl);
         String runId = "run-" + UUID.randomUUID().toString().replace("-", "").substring(0, 12);
+        Integer nextPlanRevision;
         try {
             slotTracker.markHeld(taskId, workspaceId, permitId, ttl);
-            transactionTemplate.executeWithoutResult(tx -> {
+            nextPlanRevision = transactionTemplate.execute(tx -> {
                 ResearchTask locked = requireTaskForUpdate(workspaceId, taskId);
                 TaskStatus fromStatus = TaskStatus.valueOf(locked.getStatus());
                 boolean qualityRetry = fromStatus == TaskStatus.COMPLETED
@@ -393,6 +395,7 @@ public class ResearchTaskServiceImpl extends ServiceImpl<ResearchTaskMapper, Res
                     throw BusinessException.conflict(
                             "TASK_NOT_RETRYABLE", "task has no failed quality result to retry");
                 }
+                int revision = nextPlanRevisionNo(taskId);
                 stateMachine.transition(fromStatus, TaskStatus.RUNNING);
                 mapper.prepareRetry(taskId, workspaceId, runId);
                 int updated = mapper.updateStatusIfCurrent(
@@ -400,6 +403,7 @@ public class ResearchTaskServiceImpl extends ServiceImpl<ResearchTaskMapper, Res
                 if (updated != 1) {
                     throw BusinessException.conflict("TASK_STATE_CHANGED", "task status changed while retrying");
                 }
+                return revision;
             });
         } catch (RuntimeException ex) {
             releaseTaskSlot(taskId, workspaceId);
@@ -409,7 +413,8 @@ public class ResearchTaskServiceImpl extends ServiceImpl<ResearchTaskMapper, Res
         try {
             // 全量 stream 重跑同 taskId（event_no 继续递增）
             taskExecutionService.executeStream(
-                    taskId, workspaceId, row.getCreatorId(), row.getQuery(), row.getTraceId(), false);
+                    taskId, workspaceId, row.getCreatorId(), row.getQuery(), row.getTraceId(), false,
+                    runId, nextPlanRevision == null ? 1 : nextPlanRevision);
         } catch (RejectedExecutionException ex) {
             markFailedSync(
                     taskId, workspaceId, runId,
@@ -500,6 +505,11 @@ public class ResearchTaskServiceImpl extends ServiceImpl<ResearchTaskMapper, Res
             throw BusinessException.notFound("task not found");
         }
         return task;
+    }
+
+    private int nextPlanRevisionNo(String taskId) {
+        var latest = taskPlanRevisionMapper.findLatestByTask(taskId);
+        return latest == null ? 1 : latest.getRevisionNo() + 1;
     }
 
     /** 任务控制仅允许创建者或工作空间管理员。 */

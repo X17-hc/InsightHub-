@@ -97,7 +97,10 @@ public class PlanApplicationServiceImpl extends ServiceImpl<TaskPlanRevisionMapp
         }
 
         PlanPayload payload = parsePlanPayload(eventData);
-        TaskPlanRevision revision = newPendingRevision(taskId, workspaceId, creatorId, payload);
+        TaskPlanRevision latest = revisionMapper.findLatestByTask(taskId);
+        int allocatedRevision = latest == null ? 1 : latest.getRevisionNo() + 1;
+        TaskPlanRevision revision = newPendingRevision(
+                taskId, workspaceId, creatorId, payload, allocatedRevision);
         if (!save(revision)) {
             throw new IllegalStateException("persist plan revision failed");
         }
@@ -174,12 +177,13 @@ public class PlanApplicationServiceImpl extends ServiceImpl<TaskPlanRevisionMapp
             String taskId,
             String workspaceId,
             String creatorId,
-            PlanPayload payload) {
+            PlanPayload payload,
+            int allocatedRevision) {
         TaskPlanRevision row = new TaskPlanRevision();
         row.setId("plan-" + UUID.randomUUID().toString().replace("-", "").substring(0, 24));
         row.setTaskId(taskId);
         row.setWorkspaceId(workspaceId);
-        row.setRevisionNo(payload.revisionNo());
+        row.setRevisionNo(allocatedRevision);
         row.setStatus(PLAN_PENDING);
         row.setPlanJson(payload.planJson());
         row.setPlanHash(payload.planHash());

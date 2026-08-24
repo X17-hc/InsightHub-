@@ -40,9 +40,11 @@ public class AgentTaskRequestFactory {
             String query,
             int timeoutSeconds,
             Long nextEventId,
+            String runId,
+            int planRevision,
             List<String> knowledgeBaseIds,
             boolean enableDataAnalysis) {
-        return taskBody(taskId, workspaceId, userId, query, "PLAN", 1, null,
+        return taskBody(taskId, workspaceId, userId, query, "PLAN", planRevision, runId,
                 knowledgeBaseIds, taskConfig(enableDataAnalysis, true, timeoutSeconds, nextEventId));
     }
 

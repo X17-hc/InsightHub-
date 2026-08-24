@@ -57,6 +57,17 @@ def test_production_readiness_requires_database_secret() -> None:
     assert "DATABASE_NOT_CONFIGURED" in settings.readiness_errors()
 
 
+def test_execution_failure_keeps_safe_stable_critic_code() -> None:
+    assert runner._classify_execution_failure(RuntimeError("CRITIC_RESPONSE_INVALID")) == (
+        "CRITIC_RESPONSE_INVALID",
+        "critic response did not match the required schema",
+    )
+    assert runner._classify_execution_failure(RuntimeError("sensitive internal detail")) == (
+        "AGENT_EXECUTION_FAILED",
+        "agent execution failed",
+    )
+
+
 def test_plan_rejects_cycle_and_missing_dependency() -> None:
     with pytest.raises(ValueError, match="cycle"):
         Plan.model_validate({"title": "t", "objective": "o", "tasks": [

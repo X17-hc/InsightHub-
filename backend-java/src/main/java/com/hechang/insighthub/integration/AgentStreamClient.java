@@ -17,6 +17,7 @@ import org.springframework.http.client.reactive.ReactorClientHttpConnector;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.hechang.insighthub.config.AgentProperties;
@@ -59,11 +60,14 @@ public class AgentStreamClient {
             int timeoutSec,
             Long nextEventId,
             String idempotencyKey,
+            String runId,
+            int planRevision,
             List<String> knowledgeBaseIds,
             boolean enableDataAnalysis,
             Consumer<JsonNode> onLine) {
         Map<String, Object> body = requestFactory.forStreamTask(
-                taskId, workspaceId, userId, query, timeoutSec, nextEventId, knowledgeBaseIds, enableDataAnalysis);
+                taskId, workspaceId, userId, query, timeoutSec, nextEventId, runId, planRevision,
+                knowledgeBaseIds, enableDataAnalysis);
         String key = idempotencyKey == null || idempotencyKey.isBlank()
                 ? taskId + "-stream-1"
                 : idempotencyKey;
@@ -170,34 +174,41 @@ public class AgentStreamClient {
                             if (line.isEmpty()) {
                                 continue;
                             }
+                            JsonNode node;
                             try {
                                 if (line.indexOf('\uFFFD') >= 0) {
                                     log.error("NDJSON line contains U+FFFD; check Python charset / proxy encoding: {}",
                                             abbreviate(line));
                                 }
-                                JsonNode node = objectMapper.readTree(line);
-                                onLine.accept(node);
-                            } catch (Exception ex) {
+                                node = objectMapper.readTree(line);
+                            } catch (JsonProcessingException ex) {
                                 int n = badLines.incrementAndGet();
                                 log.warn("Bad NDJSON line skipped ({}/{}): {}", n, MAX_BAD_LINES, abbreviate(line), ex);
                                 if (n > MAX_BAD_LINES) {
                                     throw new IllegalStateException("too many bad NDJSON lines");
                                 }
+                                continue;
                             }
+                            // Business/persistence failures must abort the stream. Treating them as
+                            // malformed JSON previously left the event durable but its projection missing.
+                            onLine.accept(node);
                         }
                     })
                     .blockLast();
             String rest = new String(buf.toByteArray(), java.nio.charset.StandardCharsets.UTF_8).trim();
             if (!rest.isEmpty()) {
+                JsonNode node;
                 try {
-                    onLine.accept(objectMapper.readTree(rest));
-                } catch (Exception ex) {
+                    node = objectMapper.readTree(rest);
+                } catch (JsonProcessingException ex) {
                     int n = badLines.incrementAndGet();
                     log.warn("Bad trailing NDJSON skipped ({}/{})", n, MAX_BAD_LINES, ex);
                     if (n > MAX_BAD_LINES) {
                         throw new IllegalStateException("too many bad NDJSON lines");
                     }
+                    return;
                 }
+                onLine.accept(node);
             }
         } catch (IllegalStateException ex) {
             throw ex;

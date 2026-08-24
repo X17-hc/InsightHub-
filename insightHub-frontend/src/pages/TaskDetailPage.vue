@@ -151,6 +151,8 @@ async function loadReport() {
 function artifactReason(error: unknown): string {
   const raw = error instanceof Error ? error.message : String(error || '')
   if (raw.includes('SANDBOX_UNAVAILABLE')) return 'Sandbox 当前不可用，请检查 Ubuntu Agent 与 Docker 镜像。'
+  if (raw.includes('AGENT_UNAVAILABLE')) return 'Ubuntu Agent 当前不可用或正在启动，请稍后重试。'
+  if (raw.includes('AGENT_AUTH_FAILED')) return 'Java 与 Ubuntu Agent 的内部令牌不一致，请检查环境变量。'
   if (raw.includes('ARTIFACT_MIME_REJECTED')) return '产物类型未通过安全校验。'
   if (raw.includes('ARTIFACT_TOO_LARGE')) return '产物超过允许的下载大小。'
   if (error instanceof ApiError && error.code === 40300) return '无权访问该工作空间的产物。'
@@ -317,6 +319,17 @@ function handleEvent(event: TaskEvent) {
   if (event.type === 'REPORT_DELTA' && typeof event.data?.delta === 'string' && !report.value) {
     streaming.receive(event)
     if (task.value && task.value.status === 'RUNNING') task.value.status = 'GENERATING'
+  }
+  if (event.type === 'TASK_FAILED') {
+    streaming.finish()
+    criticReviewing.value = false
+    criticSupplementing.value = false
+    if (task.value) {
+      task.value.status = 'FAILED'
+      if (typeof event.data?.code === 'string') task.value.errorCode = event.data.code
+      if (typeof event.data?.message === 'string') task.value.errorMessage = event.data.message
+    }
+    // Keep the stream open: TASK_RESULT follows with the persisted terminal snapshot.
   }
   if (event.type === 'TASK_RESULT') {
     streaming.finish()

@@ -45,4 +45,18 @@ describe('TaskEventSource', () => {
     source.emit('SANDBOX_COMPLETED', { eventId: 2, type: 'SANDBOX_COMPLETED' }, 2)
     expect(received.map((event) => event.type)).toEqual(['PLAN_REVISED', 'SANDBOX_COMPLETED'])
   })
+
+  it('keeps the stream open for a failure event until the canonical task result arrives', () => {
+    const received: TaskEvent[] = []
+    const stream = new TaskEventSource('workspace', 'task', 'token', (event) => received.push(event), undefined, 0, (url) => new FakeEventSource(url) as unknown as EventSource)
+    stream.connect()
+    const source = FakeEventSource.instances[0]
+
+    source.emit('TASK_FAILED', { eventId: 1, type: 'TASK_FAILED', data: { code: 'SEARCH_NO_RESULTS' } }, 1)
+    expect(source.closed).toBe(false)
+
+    source.emit('TASK_RESULT', { eventId: 2, type: 'TASK_RESULT', status: 'FAILED' }, 2)
+    expect(received.map((event) => event.type)).toEqual(['TASK_FAILED', 'TASK_RESULT'])
+    expect(source.closed).toBe(true)
+  })
 })
