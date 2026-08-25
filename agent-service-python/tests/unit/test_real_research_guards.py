@@ -68,6 +68,13 @@ def test_execution_failure_keeps_safe_stable_critic_code() -> None:
     )
 
 
+def test_timeout_is_not_hidden_as_generic_agent_failure() -> None:
+    assert runner._classify_execution_failure(TimeoutError("agent task timed out")) == (
+        "TIMEOUT",
+        "agent task timed out",
+    )
+
+
 def test_plan_rejects_cycle_and_missing_dependency() -> None:
     with pytest.raises(ValueError, match="cycle"):
         Plan.model_validate({"title": "t", "objective": "o", "tasks": [

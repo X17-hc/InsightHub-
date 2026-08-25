@@ -44,6 +44,8 @@ _STABLE_EXECUTION_ERRORS = {
 
 def _classify_execution_failure(exception: Exception) -> tuple[str, str]:
     """将允许公开的稳定异常分类映射到协议，其他异常继续使用通用错误。"""
+    if isinstance(exception, TimeoutError):
+        return "TIMEOUT", "agent task timed out"
     raw_code = str(exception).strip().split(":", 1)[0]
     if raw_code in _STABLE_EXECUTION_ERRORS:
         return raw_code, _STABLE_EXECUTION_ERRORS[raw_code]

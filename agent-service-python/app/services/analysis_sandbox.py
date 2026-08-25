@@ -34,6 +34,26 @@ class SandboxUnavailable(RuntimeError):
     pass
 
 
+class SandboxExecutionTimeout(RuntimeError):
+    """Raised when the fixed analysis container exceeds its execution budget."""
+
+
+def _remove_container(container_name: str) -> None:
+    """Best-effort cleanup for a Docker client killed by subprocess timeout."""
+    try:
+        subprocess.run(
+            ["docker", "rm", "--force", container_name],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        # The original timeout is the actionable failure. Cleanup diagnostics
+        # may contain host details, so they are deliberately not propagated.
+        pass
+
+
 def _validate_script(script: str) -> None:
     tree = ast.parse(script, mode="exec")
     for node in ast.walk(tree):
@@ -66,19 +86,31 @@ def run_analysis(*, task_id: str, workspace_id: str, run_id: str, evidence: list
     _validate_script(_SCRIPT)
     root = Path(settings.artifact_root_dir).resolve()
     job = uuid.uuid4().hex
+    container_name = f"insighthub-sandbox-{job}"
     input_dir, output_dir = root / task_id / job / "input", root / task_id / job / "output"
     input_dir.mkdir(parents=True, exist_ok=False); output_dir.mkdir(parents=True, exist_ok=False)
     try:
-        (input_dir / "evidence.json").write_text(json.dumps(evidence, ensure_ascii=False), encoding="utf-8")
-        (input_dir / "script.py").write_text(_SCRIPT, encoding="utf-8")
+        evidence_file = input_dir / "evidence.json"
+        script_file = input_dir / "script.py"
+        evidence_file.write_text(json.dumps(evidence, ensure_ascii=False), encoding="utf-8")
+        script_file.write_text(_SCRIPT, encoding="utf-8")
         # The container is deliberately not the service account.  It may read
         # the immutable input but receives write-only access to this one job's
         # output directory; the service account reads the result afterwards.
-        input_dir.chmod(0o755)
+        # systemd applies UMask=0027, so write_text() otherwise creates 0640
+        # files that UID 65534 cannot read through the bind mount.  Only this
+        # job's leaf inputs are exposed read-only; protected parent directories
+        # still prevent other host users from traversing the artifact tree.
+        evidence_file.chmod(0o444)
+        script_file.chmod(0o444)
+        input_dir.chmod(0o555)
         output_dir.chmod(0o733)
-        command = ["docker", "run", "--rm", "--network=none", "--user=65534:65534", "--read-only", "--security-opt=no-new-privileges",
+        command = ["docker", "run", "--rm", "--name", container_name, "--init", "--network=none", "--user=65534:65534", "--read-only", "--security-opt=no-new-privileges",
                    "--cap-drop=ALL", f"--cpus={settings.sandbox_cpu_limit}", f"--memory={settings.sandbox_memory_limit}",
                    f"--pids-limit={settings.sandbox_pids_limit}", "--tmpfs=/tmp:rw,nosuid,nodev,size=64m",
+                   "--env", "HOME=/tmp", "--env", "MPLCONFIGDIR=/tmp/matplotlib", "--env", "MPLBACKEND=Agg",
+                   "--env", "OPENBLAS_NUM_THREADS=1", "--env", "OMP_NUM_THREADS=1", "--env", "MKL_NUM_THREADS=1",
+                   "--env", "NUMEXPR_NUM_THREADS=1",
                    "-v", f"{input_dir}:/input:ro", "-v", f"{output_dir}:/output:rw", settings.sandbox_image, "python", "/input/script.py"]
         result = subprocess.run(command, capture_output=True, text=True, timeout=settings.sandbox_timeout_seconds)
         if result.returncode != 0:
@@ -93,15 +125,24 @@ def run_analysis(*, task_id: str, workspace_id: str, run_id: str, evidence: list
                  "mimeType": _ALLOWED_SUFFIXES[path.suffix.lower()], "size": path.stat().st_size, "status": "SUCCESS",
                  "codeSummary": "fixed evidence aggregation script", "stdoutSummary": result.stdout[-500:]} for path in files]
     except subprocess.TimeoutExpired as exc:
-        raise RuntimeError("SANDBOX_FAILED: execution timed out") from exc
+        _remove_container(container_name)
+        raise SandboxExecutionTimeout(
+            f"SANDBOX_FAILED: execution exceeded {settings.sandbox_timeout_seconds} seconds"
+        ) from exc
 
 
 def resolve_artifact(storage_uri: str) -> Path:
     root = Path(get_settings().artifact_root_dir).resolve()
     if not storage_uri.startswith("artifact://"):
         raise FileNotFoundError("invalid artifact URI")
-    relative = Path(*storage_uri.removeprefix("artifact://").split("/"))
-    candidate = (root / relative).resolve()
+    parts = storage_uri.removeprefix("artifact://").split("/")
+    # URI deliberately hides the implementation-only output directory.  Keep
+    # the logical three-component contract stable while resolving it to the
+    # fixed host layout used by run_analysis().
+    if len(parts) != 3 or any(not part or part in {".", ".."} for part in parts):
+        raise FileNotFoundError("invalid artifact URI")
+    task_id, job_id, file_name = parts
+    candidate = (root / task_id / job_id / "output" / file_name).resolve()
     if root not in candidate.parents or candidate.suffix.lower() not in _ALLOWED_SUFFIXES:
         raise FileNotFoundError("invalid artifact path")
     return candidate

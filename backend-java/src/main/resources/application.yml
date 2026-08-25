@@ -47,7 +47,7 @@ insighthub:
     root-dir: ${UPLOAD_ROOT_DIR:./data/uploads}
     max-bytes: 5242880
   task:
-    default-timeout-seconds: ${TASK_TIMEOUT_SECONDS:300}
+    default-timeout-seconds: ${TASK_TIMEOUT_SECONDS:900}
     create-rate-per-minute: ${TASK_CREATE_RATE_PER_MINUTE:10}
     sse-heartbeat-seconds: 15
     dispatch-max-attempts: ${TASK_DISPATCH_MAX_ATTEMPTS:5}

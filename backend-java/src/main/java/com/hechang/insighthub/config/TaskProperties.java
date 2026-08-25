@@ -16,7 +16,7 @@ public class TaskProperties {
 
     /** 默认任务超时（秒）。 */
     @Positive
-    private int defaultTimeoutSeconds = 300;
+    private int defaultTimeoutSeconds = 900;
 
     /** 每用户每分钟创建任务上限。 */
     @Positive

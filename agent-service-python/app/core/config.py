@@ -33,7 +33,8 @@ class Settings(BaseSettings):
     agent_mock_step_delay_ms: int = 800
     # Redis：任务控制字；不可用时降级进程内内存
     redis_url: str = "redis://127.0.0.1:6379/0"
-    default_timeout_seconds: int = 300
+    # 真实检索、两轮 Critic、Sandbox 与报告写作共享同一执行预算。
+    default_timeout_seconds: int = 900
     # 内部 API 共享密钥；为空时内部接口拒绝服务
     agent_internal_token: str = ""
     # 单任务执行租约等待时间，防止暂停确认与恢复请求的窄竞态
@@ -58,7 +59,10 @@ class Settings(BaseSettings):
     # 数据分析 Sandbox：所有路径均由服务端固定，模型不能覆盖这些配置。
     sandbox_enabled: bool = True
     sandbox_image: str = "insighthub-analysis-sandbox:1.0.0"
-    sandbox_timeout_seconds: int = 45
+    # pandas/pyarrow/matplotlib 的首次导入和字体缓存初始化在受限 CPU 的
+    # Sandbox 中可能超过 45 秒。该上限只约束单次容器分析，仍显著小于
+    # default_timeout_seconds 的整项研究预算。
+    sandbox_timeout_seconds: int = 120
     sandbox_memory_limit: str = "512m"
     sandbox_cpu_limit: float = 1.0
     sandbox_pids_limit: int = 64

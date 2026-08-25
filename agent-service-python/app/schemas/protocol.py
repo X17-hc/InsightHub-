@@ -28,7 +28,7 @@ class TaskConfig(StrictModel):
     # Day4 数据分析开关；Day3 固定透传 false
     enable_data_analysis: bool = Field(default=False, alias="enableDataAnalysis")
     # 流式执行超时（秒），超时 yield TASK_FAILED(TIMEOUT)
-    timeout_seconds: int = Field(default=300, alias="timeoutSeconds")
+    timeout_seconds: int = Field(default=900, alias="timeoutSeconds")
     # 下一个可用 eventId（Java 传 DB max+1）；用于 retry 续号
     next_event_id: int | None = Field(default=None, alias="nextEventId")
 
