@@ -19,7 +19,7 @@ import TaskTimeline from '@/components/TaskTimeline.vue'
 import { readSession } from '@/services/session'
 import { useStreamingReport } from '@/services/useStreamingReport'
 import { useTaskEvents } from '@/services/useTaskEvents'
-import { canCancelTask, canLoadReport, canPauseTask, canResumeTask, canRetryTask, formatDate, isTaskStatus, isTerminalTaskStatus, qualityStatusMeta } from '@/utils/display'
+import { canCancelTask, canLoadReport, canPauseTask, canResumeTask, canRetryTask, formatDate, isReportVersion, isTaskStatus, isTerminalTaskStatus, qualityStatusMeta } from '@/utils/display'
 import type { AnalysisArtifact, Citation, CritiqueResult, CriticVerdict, PlanRevision, Report, ResearchTask, TaskEvent, TaskStatus } from '@/types'
 
 const route = useRoute()
@@ -140,10 +140,15 @@ async function loadTask() {
 }
 
 async function loadReport() {
-  if (!task.value || !canLoadReport(task.value.status)) return
+  // 失败/取消任务不应沿用上一任务或上次请求残留的 report
+  if (!task.value || !canLoadReport(task.value.status)) {
+    report.value = null
+    return
+  }
   try {
     report.value = await researchTaskApi.report(workspaceId.value, taskId.value)
   } catch (error) {
+    report.value = null
     if (!(error instanceof ApiError) || error.code !== 40400) throw error
   }
 }
@@ -162,9 +167,10 @@ function artifactReason(error: unknown): string {
 
 async function loadLatestReportAndCitations() {
   await loadReport()
-  if (!report.value) { citations.value = []; return }
+  const version = report.value?.version
+  if (!report.value || !isReportVersion(version)) { citations.value = []; return }
   try {
-    citations.value = await researchTaskApi.reportCitations(workspaceId.value, taskId.value, report.value.version)
+    citations.value = await researchTaskApi.reportCitations(workspaceId.value, taskId.value, version)
   } catch (error) {
     citations.value = []
     message.warning(error instanceof Error ? `引用加载失败：${error.message}` : '引用加载失败')
@@ -172,7 +178,7 @@ async function loadLatestReportAndCitations() {
 }
 
 async function selectReportVersion(version: number) {
-  if (reportVersionLoading.value || report.value?.version === version) return
+  if (reportVersionLoading.value || report.value?.version === version || !isReportVersion(version)) return
   reportVersionLoading.value = true
   try {
     const [nextReport, nextCitations] = await Promise.all([

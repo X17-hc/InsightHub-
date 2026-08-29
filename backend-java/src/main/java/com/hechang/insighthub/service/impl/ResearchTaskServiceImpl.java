@@ -31,7 +31,6 @@ import com.hechang.insighthub.mapper.TaskEventMapper;
 import com.hechang.insighthub.mapper.TaskPlanRevisionMapper;
 import com.hechang.insighthub.model.dto.knowledge.CitationResponse;
 import com.hechang.insighthub.model.entity.KnowledgeBase;
-import com.mybatisflex.core.query.QueryWrapper;
 import com.hechang.insighthub.model.entity.ResearchTask;
 import com.hechang.insighthub.model.enums.TaskStatus;
 import com.hechang.insighthub.model.enums.QualityStatus;
@@ -82,9 +81,6 @@ public class ResearchTaskServiceImpl extends ServiceImpl<ResearchTaskMapper, Res
     private final TaskEventService taskEventService;
     private final ResearchTaskQueryService taskQueryService;
     private final PlanApplicationService planApplicationService;
-
-
-
 
     @Override
     public CreateTaskAcceptedResponse createAsync(String workspaceId, CreateResearchTaskRequest request) {
@@ -234,6 +230,8 @@ public class ResearchTaskServiceImpl extends ServiceImpl<ResearchTaskMapper, Res
             reportMapper.deleteByTaskId(taskId);
             taskEventMapper.deleteByTaskId(taskId);
             taskDispatchOutboxMapper.deleteByTaskId(taskId);
+            // 必须先断开 FK，再删 task_plan_revision，否则 MySQL 拒绝删除被引用的修订行
+            mapper.clearCurrentPlanRevision(taskId, workspaceId);
             taskPlanRevisionMapper.deleteByTaskId(taskId);
             mapper.deleteCheckpointsByTaskId(taskId);
             if (mapper.deleteByIdAndWorkspace(taskId, workspaceId) != 1) {
@@ -285,11 +283,8 @@ public class ResearchTaskServiceImpl extends ServiceImpl<ResearchTaskMapper, Res
         transactionTemplate.executeWithoutResult(tx -> {
             ResearchTask locked = requireTaskForUpdate(workspaceId, taskId);
             stateMachine.transition(TaskStatus.valueOf(locked.getStatus()), TaskStatus.PAUSING);
-            int updated = mapper.updateStatusIfCurrent(
-                    taskId, workspaceId, TaskStatus.RUNNING.name(), TaskStatus.PAUSING.name(), null, null);
-            if (updated != 1) {
-                throw BusinessException.conflict("TASK_STATE_CHANGED", "task status changed while pausing");
-            }
+            moveStatusIfCurrent(
+                    taskId, workspaceId, TaskStatus.RUNNING, TaskStatus.PAUSING, null, null, "pausing");
         });
         taskControlRedis.setControl(
                 taskId, TaskControlRedis.CONTROL_PAUSED, taskProperties.getDefaultTimeoutSeconds() + 600);
@@ -313,12 +308,8 @@ public class ResearchTaskServiceImpl extends ServiceImpl<ResearchTaskMapper, Res
                     throw BusinessException.conflict("TASK_NOT_RETRYABLE", "task has no failed quality result to retry");
                 }
                 stateMachine.transition(fromStatus, TaskStatus.RUNNING);
-                int updated = mapper.updateStatusIfCurrent(
-                        taskId, workspaceId, TaskStatus.PAUSED.name(), TaskStatus.RUNNING.name(), null, null);
-                if (updated != 1) {
-                    throw BusinessException.conflict(
-                            "TASK_STATE_CHANGED", "task status changed while resuming");
-                }
+                moveStatusIfCurrent(
+                        taskId, workspaceId, TaskStatus.PAUSED, TaskStatus.RUNNING, null, null, "resuming");
             });
         } catch (RuntimeException ex) {
             releaseTaskSlot(taskId, workspaceId);
@@ -398,11 +389,8 @@ public class ResearchTaskServiceImpl extends ServiceImpl<ResearchTaskMapper, Res
                 int revision = nextPlanRevisionNo(taskId);
                 stateMachine.transition(fromStatus, TaskStatus.RUNNING);
                 mapper.prepareRetry(taskId, workspaceId, runId);
-                int updated = mapper.updateStatusIfCurrent(
-                        taskId, workspaceId, fromStatus.name(), TaskStatus.RUNNING.name(), 30, "retry");
-                if (updated != 1) {
-                    throw BusinessException.conflict("TASK_STATE_CHANGED", "task status changed while retrying");
-                }
+                moveStatusIfCurrent(
+                        taskId, workspaceId, fromStatus, TaskStatus.RUNNING, 30, "retry", "retrying");
                 return revision;
             });
         } catch (RuntimeException ex) {
@@ -466,9 +454,7 @@ public class ResearchTaskServiceImpl extends ServiceImpl<ResearchTaskMapper, Res
             return;
         }
         for (String kbId : kbIds) {
-            KnowledgeBase kb = knowledgeBaseMapper.selectOneByQuery(QueryWrapper.create()
-                    .eq(KnowledgeBase::getId, kbId)
-                    .eq(KnowledgeBase::getWorkspaceId, workspaceId));
+            KnowledgeBase kb = knowledgeBaseMapper.findByIdAndWorkspace(kbId, workspaceId);
             if (kb == null) {
                 throw BusinessException.notFound("knowledge base not found: " + kbId);
             }
@@ -571,11 +557,23 @@ public class ResearchTaskServiceImpl extends ServiceImpl<ResearchTaskMapper, Res
             int progress,
             String node) {
         stateMachine.transition(from, to);
+        moveStatusIfCurrent(taskId, workspaceId, from, to, progress, node, "advancing");
+    }
+
+    /** CAS 迁状态；影响行数不为 1 说明并发覆盖。 */
+    private void moveStatusIfCurrent(
+            String taskId,
+            String workspaceId,
+            TaskStatus from,
+            TaskStatus to,
+            Integer progress,
+            String node,
+            String action) {
         int updated = mapper.updateStatusIfCurrent(
                 taskId, workspaceId, from.name(), to.name(), progress, node);
         if (updated != 1) {
             throw BusinessException.conflict(
-                    "TASK_STATE_CHANGED", "task status changed while advancing");
+                    "TASK_STATE_CHANGED", "task status changed while " + action);
         }
     }
 

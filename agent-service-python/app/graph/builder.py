@@ -1,4 +1,8 @@
-"""构建研究图：Planner → 审批 → 研究 → 证据核验 → Critic →（可选补充）→ Writer。"""
+"""组装 Supervisor + 专家图。
+
+HITL 审批、规则核验、finalize 是系统闸门，不是 LLM Agent：
+安全与协议终态不能交给模型自由发挥。
+"""
 
 from __future__ import annotations
 
@@ -12,13 +16,14 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.types import interrupt
 
 from app.agents.critic import critic_review, route_after_critic, supplement_research
+from app.agents.data_analysis import data_analysis
 from app.agents.evidence_verifier import merge_evidence
 from app.agents.knowledge_researcher import knowledge_research
 from app.agents.planner import create_plan
 from app.agents.researcher import web_research
-from app.agents.supervisor import dispatch_tasks, execute_plan
+from app.agents.runtime.registry import wrap_critic, wrap_research, wrap_verifier
+from app.agents.runtime.supervisor import run_supervisor
 from app.agents.writer import finalize, write_report
-from app.agents.data_analysis import data_analysis
 from app.core.config import get_settings
 from app.graph.state import ResearchState
 
@@ -29,7 +34,7 @@ _compiled = None
 
 
 def wait_for_approval(state: ResearchState) -> dict[str, Any]:
-    """PLAN 阶段暂停；第二天使用 Command(resume=...) 从同一节点恢复。"""
+    """PLAN 阶段暂停；Java 使用 Command(resume=...) 从同一节点恢复。"""
 
     if not state.get("require_plan_approval"):
         return {"phase": "EXECUTE", "approved": True, "status": "RUNNING"}
@@ -122,6 +127,16 @@ def _route_after_node(state: ResearchState) -> str:
     """任一节点失败后立即终止，禁止后续节点覆盖终态。"""
     return "stop" if state.get("status") == "FAILED" else "continue"
 
+
+def _route_after_planner(state: ResearchState) -> str:
+    """Planner 后：失败结束；需审批则 HITL；否则回 Supervisor。"""
+    if state.get("status") == "FAILED":
+        return "stop"
+    if state.get("require_plan_approval") and not state.get("approved"):
+        return "approve"
+    return "supervise"
+
+
 def _route_after_critic(state: ResearchState) -> str:
     route = route_after_critic(state)
     return "analysis" if route == "write" and state.get("enable_data_analysis") else route
@@ -129,34 +144,36 @@ def _route_after_critic(state: ResearchState) -> str:
 
 def build_graph(checkpointer: BaseCheckpointSaver[Any] | None = None):
     """
-    编译研究图。
+    编译 Supervisor 主循环图。
 
-    Args:
-        checkpointer: 可选自定义 checkpointer；默认使用配置的持久化后端。
+    Supervisor 用 Command(goto=...) 选择专家；审批 / 核验 / finalize 走固定边。
     """
     graph = StateGraph(ResearchState)
+    graph.add_node("supervisor", run_supervisor)
     graph.add_node("create_plan", create_plan)
     graph.add_node("wait_for_approval", wait_for_approval)
-    graph.add_node("dispatch_tasks", dispatch_tasks)
-    graph.add_node("execute_plan", execute_plan)
-    graph.add_node("knowledge_research", knowledge_research)
-    graph.add_node("web_research", web_research)
-    graph.add_node("merge_evidence", merge_evidence)
-    graph.add_node("critic_review", critic_review)
+    graph.add_node("knowledge_research", wrap_research(knowledge_research))
+    graph.add_node("web_research", wrap_research(web_research))
+    graph.add_node("merge_evidence", wrap_verifier(merge_evidence))
+    graph.add_node("critic_review", wrap_critic(critic_review))
     graph.add_node("supplement_research", supplement_research)
     graph.add_node("data_analysis", data_analysis)
     graph.add_node("write_report", write_report)
     graph.add_node("finalize", finalize)
 
-    graph.add_edge(START, "create_plan")
+    graph.add_edge(START, "supervisor")
     graph.add_conditional_edges(
-        "create_plan", _route_after_node, {"stop": END, "continue": "wait_for_approval"})
+        "create_plan",
+        _route_after_planner,
+        {"stop": END, "approve": "wait_for_approval", "supervise": "supervisor"},
+    )
     graph.add_conditional_edges(
-        "wait_for_approval", _route_after_node, {"stop": END, "continue": "dispatch_tasks"})
+        "wait_for_approval", _route_after_node, {"stop": END, "continue": "supervisor"})
     graph.add_conditional_edges(
-        "dispatch_tasks", _route_after_node, {"stop": END, "continue": "execute_plan"})
+        "knowledge_research", _route_after_node, {"stop": END, "continue": "supervisor"})
     graph.add_conditional_edges(
-        "execute_plan", _route_after_node, {"stop": END, "continue": "merge_evidence"})
+        "web_research", _route_after_node, {"stop": END, "continue": "supervisor"})
+    # 核验是进 Critic 的硬闸门：Supervisor 不能直接跳过。
     graph.add_conditional_edges(
         "merge_evidence", _route_after_node, {"stop": END, "continue": "critic_review"})
     graph.add_conditional_edges(
@@ -167,7 +184,7 @@ def build_graph(checkpointer: BaseCheckpointSaver[Any] | None = None):
     graph.add_conditional_edges(
         "supplement_research",
         _route_after_node,
-        {"stop": END, "continue": "execute_plan"},
+        {"stop": END, "continue": "supervisor"},
     )
     graph.add_conditional_edges("data_analysis", _route_after_node, {"stop": END, "continue": "write_report"})
     graph.add_conditional_edges(

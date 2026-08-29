@@ -1,6 +1,7 @@
 # 环境与密钥
 .env
 .local-agent-token.txt
+deploy/ubuntu/_remote_setup_once.py
 *.pem
 *.key
 

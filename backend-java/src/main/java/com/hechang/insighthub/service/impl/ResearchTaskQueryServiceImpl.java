@@ -21,7 +21,6 @@ import com.hechang.insighthub.model.entity.ResearchTask;
 import com.hechang.insighthub.model.entity.TaskEvent;
 import com.hechang.insighthub.service.ResearchTaskQueryService;
 import com.hechang.insighthub.service.WorkspaceAccessService;
-import com.mybatisflex.core.query.QueryWrapper;
 import lombok.RequiredArgsConstructor;
 
 /** 研究任务的只读查询，隔离查询 Mapper 与任务控制、执行逻辑。 */

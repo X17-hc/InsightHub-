@@ -1,4 +1,4 @@
-"""报告生成节点：仅用 verified 证据支撑结论；未验证来源仅写入限制节。"""
+"""Writer：结论只用 verified 证据。未验证来源只能出现在限制节，不能当事实。"""
 
 from __future__ import annotations
 

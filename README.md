@@ -62,9 +62,11 @@ Agent 侧建议 `AGENT_MOCK_LLM=true`（或 `EMBEDDING_MOCK=true`）。
 
 | 文档 | 说明 |
 | --- | --- |
+| [docs/insightHub-系统说明.md](docs/insightHub-系统说明.md) | 当前实现的系统说明（架构、任务/计划、API、存储、部署） |
 | [docs/protocol.md](docs/protocol.md) | 鉴权、工作空间 API、Java↔Python 协议 |
 | [docs/database-schema.md](docs/database-schema.md) | MySQL / PGVector 表结构 |
 | [docs/environment-setup.md](docs/environment-setup.md) | 本机基础设施 |
+| [docs/insighthub-current-system-guide.md](docs/insighthub-current-system-guide.md) | Ubuntu 部署与运维细则 |
 
 ## 仓库结构
 

@@ -3,18 +3,29 @@
 from __future__ import annotations
 
 import json
-import re
 from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from app.core.config import get_settings
 from app.core.llm import get_chat_model
+from app.agents.policies.critique_normalize import (
+    default_supplement_tasks,
+    enforce_verdict_invariants,
+    force_terminal_verdict,
+    normalize_critique_payload,
+)
+from app.agents.policies.json_extract import extract_json_object
 from app.graph.deadline import remaining_seconds
 from app.graph.events import make_event
 from app.graph.limits import claim_step
 from app.graph.state import ResearchState
 from app.schemas.protocol import CritiqueResult, SupplementTask
+
+_enforce_verdict_invariants = enforce_verdict_invariants
+_default_supplement_tasks = default_supplement_tasks
+_normalize_critique_payload = normalize_critique_payload
+_force_terminal_verdict = force_terminal_verdict
 
 _CRITIC_SYSTEM = """你是 InsightHub Critic。只输出 JSON，不要 Markdown。
 格式：{"verdict":"PASS|SUPPLEMENT|FAIL","summary":"...","gaps":["..."],
@@ -25,41 +36,6 @@ _CRITIC_SYSTEM = """你是 InsightHub Critic。只输出 JSON，不要 Markdown�
 3. 若已是最后一轮（cannotSupplement=true），只能 PASS 或 FAIL，并在 limitations 说明限制。
 4. 禁止输出模型原始推理长文或密钥。
 """
-
-
-def _extract_json(text: str) -> dict[str, Any]:
-    """从模型输出提取 JSON 对象。"""
-    try:
-        return json.loads(text.strip())
-    except json.JSONDecodeError:
-        match = re.search(r"\{[\s\S]*\}", text)
-        if not match:
-            raise
-        return json.loads(match.group(0))
-
-
-def _normalize_critique_payload(payload: dict[str, Any]) -> dict[str, Any]:
-    """只保留公开协议字段，并容忍模型常见的大小写和额外字段偏差。"""
-    raw_tasks = payload.get("supplementTasks", payload.get("supplement_tasks", []))
-    tasks: list[dict[str, Any]] = []
-    if isinstance(raw_tasks, list):
-        for item in raw_tasks[:2]:
-            if isinstance(item, dict):
-                tasks.append(
-                    {
-                        "id": item.get("id"),
-                        "type": item.get("type"),
-                        "description": item.get("description"),
-                    }
-                )
-    verdict = payload.get("verdict")
-    return {
-        "verdict": str(verdict).upper() if verdict is not None else verdict,
-        "summary": payload.get("summary") or "",
-        "gaps": payload.get("gaps") or [],
-        "limitations": payload.get("limitations") or [],
-        "supplementTasks": tasks,
-    }
 
 
 def _invoke_real_critique(state: ResearchState, payload: dict[str, Any]) -> CritiqueResult:
@@ -84,8 +60,8 @@ def _invoke_real_critique(state: ResearchState, payload: dict[str, Any]) -> Crit
                 continue
             raise RuntimeError("LLM_UNAVAILABLE") from exc
         try:
-            parsed = _extract_json(str(resp.content))
-            return CritiqueResult.model_validate(_normalize_critique_payload(parsed))
+            parsed = extract_json_object(str(resp.content))
+            return CritiqueResult.model_validate(normalize_critique_payload(parsed))
         except Exception as exc:  # noqa: BLE001 - 不记录模型原文，避免泄露输入证据
             if attempt == 0:
                 continue
@@ -107,26 +83,6 @@ def _evidence_summary(evidence: list[dict[str, Any]]) -> list[dict[str, Any]]:
             }
         )
     return out
-
-
-def _default_supplement_tasks(*, has_kb: bool, reason: str) -> tuple[SupplementTask, ...]:
-    """构造默认补充任务；无知识库时不下发 knowledge_research。"""
-    tasks = [
-        SupplementTask(
-            id="sup-web-1",
-            type="web_research",
-            description=reason or "补充检索官方文档与权威对比资料以支撑关键结论",
-        )
-    ]
-    if has_kb:
-        tasks.append(
-            SupplementTask(
-                id="sup-kb-1",
-                type="knowledge_research",
-                description="从内部知识库补充与计划目标相关的已验证片段",
-            )
-        )
-    return tuple(tasks[:2])
 
 
 def _mock_critique(
@@ -152,7 +108,7 @@ def _mock_critique(
             summary=summary,
             gaps=(gap,),
             limitations=(),
-            supplement_tasks=_default_supplement_tasks(
+            supplement_tasks=default_supplement_tasks(
                 has_kb=has_kb,
                 reason="补充检索官方文档与权威对比资料以支撑关键结论",
             ),
@@ -198,89 +154,6 @@ def _mock_critique(
         gaps=(),
         limitations=(),
         supplementTasks=(),
-    )
-
-
-def _force_terminal_verdict(result: CritiqueResult) -> CritiqueResult:
-    """第二轮禁止 SUPPLEMENT：降级为 FAIL 并写入限制说明。"""
-    if result.verdict != "SUPPLEMENT":
-        return result
-    limitations = list(result.limitations) + [
-        "已达到最大 Critic 轮次，补充研究请求被拒绝并以限制说明收尾"
-    ]
-    return CritiqueResult(
-        verdict="FAIL",
-        summary=result.summary or "补充请求超出轮次上限。",
-        gaps=result.gaps,
-        limitations=tuple(limitations),
-        supplementTasks=(),
-    )
-
-
-def _enforce_verdict_invariants(
-    result: CritiqueResult,
-    *,
-    evidence: list[dict[str, Any]],
-    can_supplement: bool,
-    has_kb: bool,
-    plan: dict[str, Any] | None = None,
-) -> CritiqueResult:
-    """
-    硬约束：无 verified 证据时禁止 PASS；可补充时改为 SUPPLEMENT，否则 FAIL。
-
-    同时清洗无 KB 时的 knowledge_research 补充任务。
-    """
-    verified = [e for e in evidence if e.get("verified")]
-    minimum_sources = max(3, int(((plan or {}).get("sourceRequirements") or {}).get("minVerifiedSources") or 3))
-    tasks = list(result.supplement_tasks)
-    if not has_kb:
-        tasks = [t for t in tasks if t.type != "knowledge_research"]
-
-    verdict = result.verdict
-    gaps = list(result.gaps)
-    limitations = list(result.limitations)
-    summary = result.summary
-
-    if verdict == "PASS" and len(verified) < minimum_sources:
-        if can_supplement:
-            verdict = "SUPPLEMENT"
-            summary = summary or "已核验来源未达到计划要求，请求补充研究。"
-            if "unverified_evidence" not in gaps and "missing_evidence" not in gaps:
-                gaps.append("insufficient_verified_sources" if verified else ("unverified_evidence" if evidence else "missing_evidence"))
-            if not tasks:
-                tasks = list(
-                    _default_supplement_tasks(
-                        has_kb=has_kb,
-                        reason="补充检索以获取可核验来源",
-                    )
-                )
-        else:
-            verdict = "FAIL"
-            summary = summary or "已核验来源未达到计划要求，无法通过评审。"
-            if "unverified_evidence" not in gaps and "missing_evidence" not in gaps:
-                gaps.append("insufficient_verified_sources" if verified else ("unverified_evidence" if evidence else "missing_evidence"))
-            limitations = list(
-                dict.fromkeys(
-                    limitations
-                    + ["报告结论仅供参考，缺乏已验证来源"]
-                )
-            )
-            tasks = []
-
-    if verdict == "SUPPLEMENT" and not tasks:
-        tasks = list(
-            _default_supplement_tasks(
-                has_kb=has_kb,
-                reason="补充检索以覆盖 Critic 指出的证据缺口",
-            )
-        )
-
-    return CritiqueResult(
-        verdict=verdict,
-        summary=summary,
-        gaps=tuple(gaps),
-        limitations=tuple(limitations),
-        supplement_tasks=tuple(tasks[:2]),
     )
 
 

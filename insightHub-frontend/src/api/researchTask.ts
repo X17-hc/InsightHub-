@@ -1,4 +1,5 @@
 import { http } from './http'
+import { isReportVersion } from '@/utils/display'
 import type {
   ApprovePlanPayload,
   Citation,
@@ -16,6 +17,12 @@ import type {
 
 const base = (workspaceId: string) => `/v1/workspaces/${workspaceId}/research/tasks`
 
+/** 拒绝把 undefined/NaN 拼进路径，否则 Java 会收到字面量 "undefined"。 */
+function requireReportVersion(version: number): number {
+  if (!isReportVersion(version)) throw new TypeError('report version must be a positive integer')
+  return version
+}
+
 export const researchTaskApi = {
   list: (workspaceId: string) => http.get<ResearchTask[]>(base(workspaceId)),
   get: (workspaceId: string, taskId: string) => http.get<ResearchTask>(`${base(workspaceId)}/${taskId}`),
@@ -27,15 +34,15 @@ export const researchTaskApi = {
   retry: (workspaceId: string, taskId: string) => http.post<TaskAccepted>(`${base(workspaceId)}/${taskId}/retry`),
   report: (workspaceId: string, taskId: string) => http.get<Report>(`${base(workspaceId)}/${taskId}/report`),
   reportVersions: (workspaceId: string, taskId: string) => http.get<ReportVersion[]>(`${base(workspaceId)}/${taskId}/reports`),
-  reportVersion: (workspaceId: string, taskId: string, version: number) => http.get<Report>(`${base(workspaceId)}/${taskId}/reports/${version}`),
+  reportVersion: (workspaceId: string, taskId: string, version: number) => http.get<Report>(`${base(workspaceId)}/${taskId}/reports/${requireReportVersion(version)}`),
   reportExport: (workspaceId: string, taskId: string, version: number, type: 'html' | 'pdf') =>
-    http.get<Blob>(`${base(workspaceId)}/${taskId}/reports/${version}/exports/${type}`, { responseType: 'blob' }),
+    http.get<Blob>(`${base(workspaceId)}/${taskId}/reports/${requireReportVersion(version)}/exports/${type}`, { responseType: 'blob' }),
   artifacts: (workspaceId: string, taskId: string) => http.get<AnalysisArtifact[]>(`${base(workspaceId)}/${taskId}/artifacts`),
   artifactContent: (workspaceId: string, taskId: string, artifactId: string, disposition: 'inline' | 'attachment') =>
     http.get<Blob>(`${base(workspaceId)}/${taskId}/artifacts/${artifactId}/content`, { params: { disposition }, responseType: 'blob' }),
   citations: (workspaceId: string, taskId: string) => http.get<Citation[]>(`${base(workspaceId)}/${taskId}/citations`),
   reportCitations: (workspaceId: string, taskId: string, version: number) =>
-    http.get<Citation[]>(`${base(workspaceId)}/${taskId}/reports/${version}/citations`),
+    http.get<Citation[]>(`${base(workspaceId)}/${taskId}/reports/${requireReportVersion(version)}/citations`),
   currentPlan: (workspaceId: string, taskId: string) =>
     http.get<PlanRevision>(`${base(workspaceId)}/${taskId}/plan`),
   planHistory: (workspaceId: string, taskId: string) =>

@@ -2,225 +2,192 @@ package com.hechang.insighthub.mapper;
 
 import java.util.List;
 
-import org.apache.ibatis.annotations.Param;
-import org.apache.ibatis.annotations.Delete;
-import org.apache.ibatis.annotations.Select;
-import org.apache.ibatis.annotations.Update;
-
 import com.hechang.insighthub.model.entity.ResearchTask;
 import com.mybatisflex.core.BaseMapper;
 import com.mybatisflex.core.query.QueryWrapper;
+import com.mybatisflex.core.row.Db;
+import com.mybatisflex.core.update.UpdateWrapper;
+import com.mybatisflex.core.util.UpdateEntity;
 
 /**
  * 研究任务 Mapper。
+ * 部分字段更新用 {@link UpdateEntity}（调用了 setter 才会写入，含显式 null）；
+ * 附加 WHERE 用 {@link BaseMapper#updateByQuery}；只有 SQL 表达式才 {@link UpdateWrapper#setRaw}。
  */
 public interface ResearchTaskMapper extends BaseMapper<ResearchTask> {
 
-    /** 按 ID + 工作空间查询（强制租户隔离）。 */
     default ResearchTask findByIdAndWorkspace(String id, String workspaceId) {
         return selectOneByQuery(QueryWrapper.create()
                 .eq(ResearchTask::getId, id)
                 .eq(ResearchTask::getWorkspaceId, workspaceId));
     }
 
-    /** 在终态事务内锁定任务行，避免暂停、取消与完成相互覆盖。 */
-    @Select("""
-            SELECT id AS id,
-                   workspace_id AS workspaceId,
-                   creator_id AS creatorId,
-                   query AS query,
-                   status AS status,
-                   current_plan_revision_id AS currentPlanRevisionId,
-                   plan_approved AS planApproved,
-                   knowledge_base_ids AS knowledgeBaseIds,
-                   quality_status AS qualityStatus,
-                   trace_id AS traceId,
-                   current_run_id AS currentRunId
-            FROM research_task
-            WHERE id = #{id} AND workspace_id = #{workspaceId}
-            FOR UPDATE
-            """)
-    ResearchTask findByIdAndWorkspaceForUpdate(
-            @Param("id") String id,
-            @Param("workspaceId") String workspaceId);
+    default ResearchTask findByIdAndWorkspaceForUpdate(String id, String workspaceId) {
+        return selectOneByQuery(QueryWrapper.create()
+                .eq(ResearchTask::getId, id)
+                .eq(ResearchTask::getWorkspaceId, workspaceId)
+                .forUpdate());
+    }
 
-    /** 按工作空间列出任务（创建时间倒序）。 */
     default List<ResearchTask> listByWorkspace(String workspaceId) {
         return selectListByQuery(QueryWrapper.create()
                 .eq(ResearchTask::getWorkspaceId, workspaceId)
                 .orderBy(ResearchTask::getCreatedAt, false));
     }
 
-    /**
-     * 更新任务状态；progress / current_node 为 null 时用 COALESCE 保留原值。
-     */
-    @Update("""
-            UPDATE research_task
-            SET status = #{status},
-                progress = COALESCE(#{progress}, progress),
-                current_node = COALESCE(#{currentNode}, current_node),
-                started_at = COALESCE(started_at, NOW()),
-                updated_at = NOW()
-            WHERE id = #{id} AND workspace_id = #{workspaceId}
-            """)
-    int updateStatus(
-            @Param("id") String id,
-            @Param("workspaceId") String workspaceId,
-            @Param("status") String status,
-            @Param("progress") Integer progress,
-            @Param("currentNode") String currentNode);
+    default int deleteByIdAndWorkspace(String taskId, String workspaceId) {
+        return deleteByQuery(QueryWrapper.create()
+                .eq(ResearchTask::getId, taskId)
+                .eq(ResearchTask::getWorkspaceId, workspaceId));
+    }
 
-    /** 仅当前状态匹配时迁移，防止并发控制请求覆盖终态。 */
-    @Update("""
-            UPDATE research_task
-            SET status = #{toStatus},
-                progress = COALESCE(#{progress}, progress),
-                current_node = COALESCE(#{currentNode}, current_node),
-                started_at = COALESCE(started_at, NOW()),
-                updated_at = NOW()
-            WHERE id = #{id}
-              AND workspace_id = #{workspaceId}
-              AND status = #{fromStatus}
-            """)
-    int updateStatusIfCurrent(
-            @Param("id") String id,
-            @Param("workspaceId") String workspaceId,
-            @Param("fromStatus") String fromStatus,
-            @Param("toStatus") String toStatus,
-            @Param("progress") Integer progress,
-            @Param("currentNode") String currentNode);
+    default int deleteCheckpointsByTaskId(String taskId) {
+        return Db.deleteByQuery("task_checkpoint", QueryWrapper.create().where("task_id = ?", taskId));
+    }
 
-    /**
-     * 写入终态：COMPLETED 时 progress=100，否则保留原 progress。
-     *
-     * @param id           任务 ID
-     * @param workspaceId  工作空间 ID
-     * @param status       终态状态
-     * @param runId        当前执行轮次
-     * @param errorCode    错误码（可为 null）
-     * @param errorMessage 错误信息（可为 null）
-     * @return 影响行数
-     */
-    @Update("""
-            UPDATE research_task
-            SET status = #{status},
-                current_run_id = #{runId},
-                progress = CASE WHEN #{status} = 'COMPLETED' THEN 100 ELSE progress END,
-                error_code = #{errorCode},
-                error_message = #{errorMessage},
-                started_at = COALESCE(started_at, NOW()),
-                completed_at = NOW(),
-                updated_at = NOW()
-            WHERE id = #{id} AND workspace_id = #{workspaceId}
-            """)
-    int updateTaskFinished(
-            @Param("id") String id,
-            @Param("workspaceId") String workspaceId,
-            @Param("status") String status,
-            @Param("runId") String runId,
-            @Param("errorCode") String errorCode,
-            @Param("errorMessage") String errorMessage);
+    default int clearCurrentPlanRevision(String taskId, String workspaceId) {
+        ResearchTask row = UpdateEntity.of(ResearchTask.class);
+        row.setCurrentPlanRevisionId(null);
+        return updateByQuery(row, QueryWrapper.create()
+                .eq(ResearchTask::getId, taskId)
+                .eq(ResearchTask::getWorkspaceId, workspaceId));
+    }
 
-    /** 重试前清除错误并写入新 runId */
-    @Update("""
-            UPDATE research_task
-            SET current_run_id = #{runId},
-                error_code = NULL,
-                error_message = NULL,
-                quality_status = 'PENDING',
-                quality_summary = NULL,
-                verified_citation_count = 0,
-                total_citation_count = 0,
-                completed_at = NULL,
-                updated_at = NOW()
-            WHERE id = #{id} AND workspace_id = #{workspaceId}
-            """)
-    int prepareRetry(
-            @Param("id") String id,
-            @Param("workspaceId") String workspaceId,
-            @Param("runId") String runId);
+    default int updateQuality(
+            String id, String workspaceId, String qualityStatus, String qualitySummary,
+            int verifiedCount, int totalCount) {
+        ResearchTask row = UpdateEntity.of(ResearchTask.class);
+        row.setQualityStatus(qualityStatus);
+        row.setQualitySummary(qualitySummary);
+        row.setVerifiedCitationCount(verifiedCount);
+        row.setTotalCitationCount(totalCount);
+        return updateByQuery(row, QueryWrapper.create()
+                .eq(ResearchTask::getId, id)
+                .eq(ResearchTask::getWorkspaceId, workspaceId));
+    }
 
-    @Update("""
-            UPDATE research_task
-            SET quality_status=#{qualityStatus}, quality_summary=#{qualitySummary},
-                verified_citation_count=#{verifiedCount}, total_citation_count=#{totalCount}, updated_at=NOW()
-            WHERE id=#{id} AND workspace_id=#{workspaceId}
-            """)
-    int updateQuality(@Param("id") String id, @Param("workspaceId") String workspaceId,
-            @Param("qualityStatus") String qualityStatus, @Param("qualitySummary") String qualitySummary,
-            @Param("verifiedCount") int verifiedCount, @Param("totalCount") int totalCount);
+    default int updateStatus(String id, String workspaceId, String status, Integer progress, String currentNode) {
+        ResearchTask row = UpdateEntity.of(ResearchTask.class);
+        row.setStatus(status);
+        if (progress != null) {
+            row.setProgress(progress);
+        }
+        if (currentNode != null) {
+            row.setCurrentNode(currentNode);
+        }
+        UpdateWrapper.of(row).setRaw(ResearchTask::getStartedAt, "COALESCE(started_at, NOW())");
+        return updateByQuery(row, QueryWrapper.create()
+                .eq(ResearchTask::getId, id)
+                .eq(ResearchTask::getWorkspaceId, workspaceId));
+    }
 
-    /** Persist the current plan projection and task status atomically. */
-    @Update("""
-            UPDATE research_task
-            SET current_plan_revision_id = #{revisionId},
-                plan_json = #{planJson},
-                plan_approved = #{planApproved},
-                current_run_id = #{runId},
-                status = #{status},
-                updated_at = NOW()
-            WHERE id = #{id} AND workspace_id = #{workspaceId}
-            """)
-    int updatePlanProjection(
-            @Param("id") String id,
-            @Param("workspaceId") String workspaceId,
-            @Param("revisionId") String revisionId,
-            @Param("planJson") String planJson,
-            @Param("planApproved") Integer planApproved,
-            @Param("runId") String runId,
-            @Param("status") String status);
+    default int updateStatusIfCurrent(
+            String id, String workspaceId, String fromStatus, String toStatus,
+            Integer progress, String currentNode) {
+        ResearchTask row = UpdateEntity.of(ResearchTask.class);
+        row.setStatus(toStatus);
+        if (progress != null) {
+            row.setProgress(progress);
+        }
+        if (currentNode != null) {
+            row.setCurrentNode(currentNode);
+        }
+        UpdateWrapper.of(row).setRaw(ResearchTask::getStartedAt, "COALESCE(started_at, NOW())");
+        return updateByQuery(row, QueryWrapper.create()
+                .eq(ResearchTask::getId, id)
+                .eq(ResearchTask::getWorkspaceId, workspaceId)
+                .eq(ResearchTask::getStatus, fromStatus));
+    }
 
-    @Update("""
-            UPDATE research_task SET status=#{status}, plan_approved=#{planApproved},
-              current_node=#{currentNode}, progress=#{progress}, current_run_id=#{runId},
-              current_plan_revision_id=#{revisionId}, updated_at=NOW()
-            WHERE id=#{id} AND workspace_id=#{workspaceId}
-            """)
-    int updatePlanAction(@Param("id") String id, @Param("workspaceId") String workspaceId,
-            @Param("status") String status, @Param("planApproved") Integer planApproved,
-            @Param("currentNode") String currentNode, @Param("progress") int progress,
-            @Param("runId") String runId, @Param("revisionId") String revisionId);
+    default int updateTaskFinished(
+            String id, String workspaceId, String status, String runId,
+            String errorCode, String errorMessage) {
+        ResearchTask row = UpdateEntity.of(ResearchTask.class);
+        row.setStatus(status);
+        row.setCurrentRunId(runId);
+        row.setErrorCode(errorCode);
+        row.setErrorMessage(errorMessage);
+        if ("COMPLETED".equals(status)) {
+            row.setProgress(100);
+        }
+        UpdateWrapper.of(row)
+                .setRaw(ResearchTask::getStartedAt, "COALESCE(started_at, NOW())")
+                .setRaw(ResearchTask::getCompletedAt, "NOW()");
+        return updateByQuery(row, QueryWrapper.create()
+                .eq(ResearchTask::getId, id)
+                .eq(ResearchTask::getWorkspaceId, workspaceId));
+    }
 
-    /**
-     * Start a new planning round after a revision request.
-     *
-     * <p>The task projection is deliberately cleared here.  The old immutable
-     * revision remains available in {@code task_plan_revision}, but it must not
-     * be exposed as the current plan while the replacement is being generated.</p>
-     */
-    @Update("""
-            UPDATE research_task
-            SET status = #{status},
-                plan_json = NULL,
-                plan_approved = NULL,
-                current_plan_revision_id = NULL,
-                current_node = #{currentNode},
-                progress = #{progress},
-                current_run_id = #{runId},
-                updated_at = NOW()
-            WHERE id = #{id} AND workspace_id = #{workspaceId}
-            """)
-    int resetPlanForRevision(@Param("id") String id, @Param("workspaceId") String workspaceId,
-            @Param("status") String status, @Param("currentNode") String currentNode,
-            @Param("progress") int progress, @Param("runId") String runId);
+    default int prepareRetry(String id, String workspaceId, String runId) {
+        ResearchTask row = UpdateEntity.of(ResearchTask.class);
+        row.setCurrentRunId(runId);
+        row.setErrorCode(null);
+        row.setErrorMessage(null);
+        row.setQualityStatus("PENDING");
+        row.setQualitySummary(null);
+        row.setVerifiedCitationCount(0);
+        row.setTotalCitationCount(0);
+        row.setCompletedAt(null);
+        return updateByQuery(row, QueryWrapper.create()
+                .eq(ResearchTask::getId, id)
+                .eq(ResearchTask::getWorkspaceId, workspaceId));
+    }
 
-    /** Fail only the still-current dispatch run; an old retry must never overwrite a newer revision. */
-    @Update("""
-            UPDATE research_task
-            SET status = 'FAILED', error_code = #{errorCode}, error_message = #{errorMessage},
-                completed_at = NOW(), updated_at = NOW()
-            WHERE id = #{id} AND workspace_id = #{workspaceId} AND current_run_id = #{runId}
-              AND status IN ('PLANNING', 'RUNNING', 'WAITING_APPROVAL')
-            """)
-    int failDispatchIfCurrentRun(@Param("id") String id, @Param("workspaceId") String workspaceId,
-            @Param("runId") String runId, @Param("errorCode") String errorCode,
-            @Param("errorMessage") String errorMessage);
+    default int updatePlanProjection(
+            String id, String workspaceId, String revisionId, String planJson,
+            Integer planApproved, String runId, String status) {
+        ResearchTask row = UpdateEntity.of(ResearchTask.class);
+        row.setCurrentPlanRevisionId(revisionId);
+        row.setPlanJson(planJson);
+        row.setPlanApproved(planApproved);
+        row.setCurrentRunId(runId);
+        row.setStatus(status);
+        return updateByQuery(row, QueryWrapper.create()
+                .eq(ResearchTask::getId, id)
+                .eq(ResearchTask::getWorkspaceId, workspaceId));
+    }
 
-    /** 删除任务的图执行 Checkpoint 索引，必须先于任务主记录删除。 */
-    @Delete("DELETE FROM task_checkpoint WHERE task_id = #{taskId}")
-    int deleteCheckpointsByTaskId(@Param("taskId") String taskId);
+    default int updatePlanAction(
+            String id, String workspaceId, String status, Integer planApproved,
+            String currentNode, int progress, String runId, String revisionId) {
+        ResearchTask row = UpdateEntity.of(ResearchTask.class);
+        row.setStatus(status);
+        row.setPlanApproved(planApproved);
+        row.setCurrentNode(currentNode);
+        row.setProgress(progress);
+        row.setCurrentRunId(runId);
+        row.setCurrentPlanRevisionId(revisionId);
+        return updateByQuery(row, QueryWrapper.create()
+                .eq(ResearchTask::getId, id)
+                .eq(ResearchTask::getWorkspaceId, workspaceId));
+    }
 
-    /** 删除时再次限定工作空间，避免跨空间误删。 */
-    @Delete("DELETE FROM research_task WHERE id = #{taskId} AND workspace_id = #{workspaceId}")
-    int deleteByIdAndWorkspace(@Param("taskId") String taskId, @Param("workspaceId") String workspaceId);
+    default int resetPlanForRevision(
+            String id, String workspaceId, String status, String currentNode, int progress, String runId) {
+        ResearchTask row = UpdateEntity.of(ResearchTask.class);
+        row.setStatus(status);
+        row.setPlanJson(null);
+        row.setPlanApproved(null);
+        row.setCurrentPlanRevisionId(null);
+        row.setCurrentNode(currentNode);
+        row.setProgress(progress);
+        row.setCurrentRunId(runId);
+        return updateByQuery(row, QueryWrapper.create()
+                .eq(ResearchTask::getId, id)
+                .eq(ResearchTask::getWorkspaceId, workspaceId));
+    }
+
+    default int failDispatchIfCurrentRun(
+            String id, String workspaceId, String runId, String errorCode, String errorMessage) {
+        ResearchTask row = UpdateEntity.of(ResearchTask.class);
+        row.setStatus("FAILED");
+        row.setErrorCode(errorCode);
+        row.setErrorMessage(errorMessage);
+        UpdateWrapper.of(row).setRaw(ResearchTask::getCompletedAt, "NOW()");
+        return updateByQuery(row, QueryWrapper.create()
+                .eq(ResearchTask::getId, id)
+                .eq(ResearchTask::getWorkspaceId, workspaceId)
+                .eq(ResearchTask::getCurrentRunId, runId)
+                .in(ResearchTask::getStatus, "PLANNING", "RUNNING", "WAITING_APPROVAL"));
+    }
 }

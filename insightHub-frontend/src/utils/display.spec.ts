@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { canRetryTask } from './display'
+import { canRetryTask, isReportVersion } from './display'
 
 describe('research execution and quality retry policy', () => {
   it('allows retry for execution failure and completed low-quality reports', () => {
@@ -10,5 +10,16 @@ describe('research execution and quality retry policy', () => {
 
   it('does not retry a completed quality pass', () => {
     expect(canRetryTask('COMPLETED', 'PASS')).toBe(false)
+  })
+})
+
+describe('isReportVersion', () => {
+  it('accepts positive integers only', () => {
+    expect(isReportVersion(1)).toBe(true)
+    expect(isReportVersion(4)).toBe(true)
+    expect(isReportVersion(undefined)).toBe(false)
+    expect(isReportVersion('undefined')).toBe(false)
+    expect(isReportVersion(0)).toBe(false)
+    expect(isReportVersion(1.5)).toBe(false)
   })
 })

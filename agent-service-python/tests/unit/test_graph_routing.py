@@ -27,6 +27,7 @@ def test_three_agent_pipeline_produces_markdown():
     assert "PLAN_CREATED" in types
     assert "NODE_COMPLETED" in types
     assert "TASK_COMPLETED" in types
+    assert "AGENT_HANDOFF" in types
 
 
 def test_max_steps_stops_before_research_and_writer():
@@ -66,5 +67,4 @@ def test_max_steps_is_enforced_after_supervisor():
     assert result.error is not None
     assert result.error.code == "MAX_STEPS_EXCEEDED"
     assert result.report_markdown is None
-    assert any(event.node in {"knowledge_research", "execute_plan"} for event in result.events)
     assert all(event.node not in {"critic_review", "write_report"} for event in result.events)

@@ -39,6 +39,9 @@ _STABLE_EXECUTION_ERRORS = {
     "CRITIC_RESPONSE_INVALID": "critic response did not match the required schema",
     "LLM_UNAVAILABLE": "LLM service is temporarily unavailable",
     "LLM_NOT_CONFIGURED": "LLM configuration is unavailable",
+    "HANDOFF_DENIED": "agent handoff was denied",
+    "HANDOFF_LIMIT": "agent handoff limit exceeded",
+    "AGENT_OUTPUT_INVALID": "agent did not produce a valid tool result",
 }
 
 
@@ -105,12 +108,17 @@ def _build_init_state(
         "errors": [],
         "status": "RUNNING",
         "events": initial_events,
+        "active_agent": "supervisor",
+        "handoff_log": [],
+        "agent_inbox": {},
+        "needs_verify": False,
+        "needs_critique": False,
     }
 
 
 def run_research_task(request: AgentTaskRequest, trace_id: str | None = None) -> AgentTaskResponse:
     """
-    同步执行 Planner/Supervisor/Researcher 最小链路。
+    同步执行 Supervisor + 专家图。租约 / Checkpoint / 控制字仍是协议边界，不在此重写。
 
     Args:
         request: 协议请求体。

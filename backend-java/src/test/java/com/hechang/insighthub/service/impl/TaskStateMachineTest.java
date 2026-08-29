@@ -29,4 +29,14 @@ class TaskStateMachineTest {
     void planningTaskCanWaitForPlanApproval() {
         assertDoesNotThrow(() -> stateMachine.transition(TaskStatus.PLANNING, TaskStatus.WAITING_APPROVAL));
     }
+
+    @Test
+    void waitingApprovalTaskCanBeCancelled() {
+        assertDoesNotThrow(() -> stateMachine.transition(TaskStatus.WAITING_APPROVAL, TaskStatus.CANCELLED));
+    }
+
+    @Test
+    void reviewingTaskCanBeCancelled() {
+        assertDoesNotThrow(() -> stateMachine.transition(TaskStatus.REVIEWING, TaskStatus.CANCELLED));
+    }
 }

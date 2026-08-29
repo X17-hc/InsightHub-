@@ -103,6 +103,7 @@ X-Idempotency-Key: <taskId>-attempt-<n>
 | TASK_PAUSED | 是 |
 | TASK_COMPLETED | 是 |
 | TASK_FAILED | 是 |
+| AGENT_HANDOFF | 是（Supervisor 将控制权交给专家时） |
 
 `eventId` 在单次任务内从 1 单调递增，供后续 SSE 断线续传。事件 `data` 为结构化对象，不传递模型原始全文或密钥。
 

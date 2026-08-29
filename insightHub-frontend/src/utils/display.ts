@@ -12,6 +12,10 @@ export function canRetryTask(status?: TaskStatus, quality?: QualityStatus): bool
   return status === 'FAILED' || (status === 'COMPLETED' && (quality === 'FAIL' || quality === 'LEGACY_SYNTHETIC'))
 }
 export function canLoadReport(status?: TaskStatus): boolean { return status === 'GENERATING' || status === 'COMPLETED' }
+/** 报告版本号必须是正整数，避免拼出 /reports/undefined。 */
+export function isReportVersion(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 1
+}
 export function isActiveTask(status?: TaskStatus): boolean { return status === 'RUNNING' || status === 'PLANNING' || status === 'GENERATING' || status === 'PAUSING' }
 export const documentStatusMeta = { PENDING: { label: '等待解析', color: 'default' }, PARSING: { label: '解析中', color: 'blue' }, INDEXED: { label: '已索引', color: 'green' }, FAILED: { label: '解析失败', color: 'red' } } as const
 export function formatDate(value?: string): string { if (!value) return '--'; const date = new Date(value); if (Number.isNaN(date.getTime())) return value; return new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).format(date) }

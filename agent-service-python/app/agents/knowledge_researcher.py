@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 import hashlib
 from typing import Any
 
+from app.agents.policies.plan_scheduler import KB_TYPES, next_ready_batch
 from app.graph.events import make_event
 from app.graph.limits import claim_step
 from app.graph.state import ResearchState
@@ -40,11 +41,13 @@ def knowledge_research(state: ResearchState) -> dict[str, Any]:
     )
 
     raw_pending = list(state.get("pending_tasks") or [])
-    pending = [
-        t
-        for t in raw_pending
-        if (t.get("type") or "").lower() in {"knowledge_research", "kb_research", "knowledge"}
-    ]
+    ready = next_ready_batch(
+        raw_pending,
+        list(state.get("completed_tasks") or []),
+        max_parallelism=int(state.get("max_parallelism") or 3),
+        type_filter=KB_TYPES,
+    )
+    pending = list(ready.ready)
     # 仅当完全没有 pending 且绑定了 KB 时兜底检索；补充轮次带 web-only 时不自动插入
     if not pending and kb_ids and not raw_pending:
         pending = [
@@ -57,12 +60,8 @@ def knowledge_research(state: ResearchState) -> dict[str, Any]:
 
     all_evidence = list(state.get("evidence") or [])
     completed = list(state.get("completed_tasks") or [])
-    remaining = [
-        t
-        for t in raw_pending
-        if (t.get("type") or "").lower()
-        not in {"knowledge_research", "kb_research", "knowledge"}
-    ]
+    ready_ids = {str(item.get("id")) for item in pending}
+    remaining = [item for item in raw_pending if str(item.get("id")) not in ready_ids]
 
     for sub in pending:
         query = str(sub.get("description") or state.get("user_query") or "")

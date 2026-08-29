@@ -1,18 +1,20 @@
-"""Planner Agent：澄清需求并生成结构化研究计划，禁止调用搜索。"""
+"""Planner：只产出结构化计划。禁止挂搜索工具，避免规划阶段污染取证。"""
 
 from __future__ import annotations
 
-import hashlib
-import json
-import re
 from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
+from app.agents.policies.json_extract import extract_json_object
+from app.agents.policies.plan_validate import plan_hash, validate_new_plan
+
+# 单测兼容旧私有名
+_validate_new_plan = validate_new_plan
 from app.core.config import get_settings
 from app.core.llm import get_chat_model
-from app.graph.events import make_event
 from app.graph.deadline import remaining_seconds
+from app.graph.events import make_event
 from app.graph.limits import claim_step
 from app.graph.state import ResearchState
 from app.schemas.protocol import Plan
@@ -22,17 +24,6 @@ _PLANNER_SYSTEM = """你是 InsightHub Planner。只输出 JSON，不调用工�
 {"id":"task-1","type":"web_research|knowledge_research","description":"...","dependsOn":[]}
 ],"researchDimensions":["..."],"sourceRequirements":{"minVerifiedSources":3,"requireOfficialSources":true}}
 新计划至少 2 个、最多 8 个任务；复杂主题必须拆分为独立取证维度；dependsOn 必须构成无环图；绑定知识库时至少包含一个 knowledge_research。"""
-
-
-def _extract_json(text: str) -> dict[str, Any]:
-    """从模型输出中提取 JSON 对象。"""
-    try:
-        return json.loads(text.strip())
-    except json.JSONDecodeError:
-        match = re.search(r"\{[\s\S]*\}", text)
-        if not match:
-            raise
-        return json.loads(match.group(0))
 
 
 def _mock_plan(query: str, has_kb: bool) -> Plan:
@@ -58,17 +49,6 @@ def _mock_plan(query: str, has_kb: bool) -> Plan:
     return Plan.model_validate({"title": f"调研：{query[:40]}",
                                 "objective": query,
                                 "tasks": tasks})
-
-
-def canonical_plan_json(plan: Plan) -> str:
-    return json.dumps(plan.model_dump(by_alias=True),
-                      ensure_ascii=False,
-                      sort_keys=True,
-                      separators=(",", ":"))
-
-
-def plan_hash(plan: Plan) -> str:
-    return hashlib.sha256(canonical_plan_json(plan).encode("utf-8")).hexdigest()
 
 
 def create_plan(state: ResearchState) -> dict[str, Any]:
@@ -113,8 +93,8 @@ def create_plan(state: ResearchState) -> dict[str, Any]:
                                  ("\n修订意见：" + state["revision_instruction"]
                                   if state.get("revision_instruction") else "")),
         ])
-        plan = Plan.model_validate(_extract_json(str(response.content)))
-        _validate_new_plan(plan, has_kb=has_kb)
+        plan = Plan.model_validate(extract_json_object(str(response.content)))
+        validate_new_plan(plan, has_kb=has_kb)
 
     digest = plan_hash(plan)
     plan_dict = plan.model_dump(by_alias=True)
@@ -145,15 +125,3 @@ def create_plan(state: ResearchState) -> dict[str, Any]:
             "clarified_query": plan.objective,
             "step_count": step,
             "events": events[len(state.get("events") or []):]}
-
-
-def _validate_new_plan(plan: Plan, *, has_kb: bool) -> None:
-    """Validate new LLM plans without breaking parsing of immutable historical plans."""
-    if not 2 <= len(plan.tasks) <= 8:
-        raise ValueError("new plan must contain between two and eight tasks")
-    if len(plan.research_dimensions) < 2:
-        raise ValueError("new plan must declare at least two research dimensions")
-    if not has_kb and all(task.type == "knowledge_research" for task in plan.tasks):
-        raise ValueError("knowledge-only plan requires a bound knowledge base")
-    if any(len(task.description.strip()) < 12 for task in plan.tasks):
-        raise ValueError("plan task must contain a concrete evidence objective")

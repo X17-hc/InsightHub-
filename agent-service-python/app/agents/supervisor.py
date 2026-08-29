@@ -1,83 +1,68 @@
-"""Supervisor Agent：分派 knowledge_research / web_research 任务。"""
+"""兼容层：dispatch / execute_plan 供单测验证 DAG。
+
+主图不再调用本模块；调度算法在 policies.plan_scheduler，跳转在 runtime.supervisor。
+"""
 
 from __future__ import annotations
 
 from typing import Any
 
+from app.agents.knowledge_researcher import knowledge_research
+from app.agents.policies.plan_scheduler import (
+    KB_TYPES,
+    WEB_TYPES,
+    mark_skipped,
+    next_ready_batch,
+    seed_pending_from_plan,
+    task_agent_name,
+)
+from app.agents.researcher import web_research
 from app.graph.events import make_event
 from app.graph.limits import claim_step
 from app.graph.state import ResearchState
-from app.agents.knowledge_researcher import knowledge_research
-from app.agents.researcher import web_research
 
-_KB_TYPES = {"knowledge_research", "kb_research", "knowledge"}
-_WEB_TYPES = {"web_research", "web-research", "research"}
+_KB_TYPES = KB_TYPES
+_WEB_TYPES = WEB_TYPES
 
 
 def dispatch_tasks(state: ResearchState) -> dict[str, Any]:
-    """
-    Supervisor 节点：从计划中提取待执行研究任务。
-
-    有知识库时确保至少一条 knowledge_research；否则仅 web_research。
-    """
+    """从计划提取待执行任务（单测与旧节点兼容）。"""
     step, limit_failure = claim_step(state, "dispatch_tasks")
     if limit_failure is not None:
         return limit_failure
     events = list(state.get("events") or [])
-    task_id = state["task_id"]
-    run_id = state["run_id"]
-    kb_ids = list(state.get("knowledge_base_ids") or [])
-
-    delta: list[dict[str, Any]] = []
-    delta.append(
+    pending = seed_pending_from_plan(
+        state.get("plan"),
+        knowledge_base_ids=list(state.get("knowledge_base_ids") or []),
+        query=str(state.get("clarified_query") or state.get("user_query") or ""),
+    )
+    delta = [
         make_event(
-            events=events + delta,
-            task_id=task_id,
-            run_id=run_id,
+            events=events,
+            task_id=state["task_id"],
+            run_id=state["run_id"],
             event_type="NODE_STARTED",
             node="dispatch_tasks",
             data={"agent": "Supervisor"},
-        )
-    )
-
-    plan = state.get("plan") or {}
-    tasks = list(plan.get("tasks") or [])
-    pending = [
-        t
-        for t in tasks
-        if (t.get("type") or "").lower() in (_KB_TYPES | _WEB_TYPES)
-    ]
-    if kb_ids and not any((t.get("type") or "").lower() in _KB_TYPES for t in pending):
-        pending.insert(
-            0,
-            {
-                "id": "task-kb",
-                "type": "knowledge_research",
-                "description": state.get("clarified_query") or state.get("user_query") or "",
-                "dependsOn": [],
-            },
-        )
-    if not pending:
-        pending = [
-            {
-                "id": "task-1",
-                "type": "web_research",
-                "description": state.get("clarified_query") or state.get("user_query") or "",
-                "dependsOn": [],
-            }
-        ]
-
-    delta.append(
+        ),
         make_event(
-            events=events + delta,
-            task_id=task_id,
-            run_id=run_id,
+            events=events + [{}],
+            task_id=state["task_id"],
+            run_id=state["run_id"],
             event_type="NODE_COMPLETED",
             node="dispatch_tasks",
             data={"agent": "Supervisor", "pendingCount": len(pending)},
-        )
+        ),
+    ]
+    # 第二事件 eventId 需基于第一事件
+    delta[1] = make_event(
+        events=events + [delta[0]],
+        task_id=state["task_id"],
+        run_id=state["run_id"],
+        event_type="NODE_COMPLETED",
+        node="dispatch_tasks",
+        data={"agent": "Supervisor", "pendingCount": len(pending)},
     )
-
     return {
         "pending_tasks": pending,
         "completed_tasks": list(state.get("completed_tasks") or []),
@@ -88,107 +73,133 @@ def dispatch_tasks(state: ResearchState) -> dict[str, Any]:
 
 
 def execute_plan(state: ResearchState) -> dict[str, Any]:
-    """按有界 DAG 的 ready 批次执行计划，保证 dependsOn 具有真实语义。"""
+    """按 DAG 同步执行（单测用）。主图改为 Supervisor handoff 到专家。"""
     working: dict[str, Any] = dict(state)
     original_events = list(state.get("events") or [])
     delta: list[dict[str, Any]] = []
-    tasks = [dict(item) for item in (state.get("pending_tasks") or [])]
+    remaining = [dict(item) for item in (state.get("pending_tasks") or [])]
     completed = list(state.get("completed_tasks") or [])
-    completed_ids = {str(item.get("id")) for item in completed if item.get("status") == "DONE"}
-    failed_ids = {str(item.get("id")) for item in completed if item.get("status") == "FAILED"}
-    remaining = {str(item.get("id")): item for item in tasks}
-    batch_no = 0
     max_parallelism = max(1, min(8, int(state.get("max_parallelism") or 3)))
+    batch_no = 0
 
     while remaining:
-        skipped = [
-            item for item in remaining.values()
-            if set(item.get("dependsOn") or ()) & failed_ids
-        ]
-        for item in skipped:
+        batch = next_ready_batch(remaining, completed, max_parallelism=max_parallelism)
+        for item in batch.skipped:
             task_ref = str(item.get("id"))
-            delta.append(make_event(
-                events=original_events + delta,
-                task_id=state["task_id"], run_id=state["run_id"],
-                event_type="PLAN_TASK_SKIPPED", node="execute_plan",
-                data={"planTaskId": task_ref, "taskType": item.get("type"), "reason": "SKIPPED_DEPENDENCY_FAILED"},
-            ))
-            completed.append({**item, "status": "SKIPPED_DEPENDENCY_FAILED", "evidenceCount": 0})
-            failed_ids.add(task_ref)
-            remaining.pop(task_ref, None)
+            delta.append(
+                make_event(
+                    events=original_events + delta,
+                    task_id=state["task_id"],
+                    run_id=state["run_id"],
+                    event_type="PLAN_TASK_SKIPPED",
+                    node="execute_plan",
+                    data={"planTaskId": task_ref, "taskType": item.get("type"), "reason": "SKIPPED_DEPENDENCY_FAILED"},
+                )
+            )
+            completed.append(mark_skipped(item))
+            remaining = [row for row in remaining if str(row.get("id")) != task_ref]
         if not remaining:
             break
-
-        ready = [
-            item for item in remaining.values()
-            if set(item.get("dependsOn") or ()) <= completed_ids
-        ][:max_parallelism]
-        if not ready:
+        if batch.deadlock or not batch.ready:
             error = {"code": "PLAN_DEPENDENCY_DEADLOCK", "message": "plan dependencies cannot make progress"}
-            delta.append(make_event(events=original_events + delta, task_id=state["task_id"], run_id=state["run_id"],
-                                    event_type="TASK_FAILED", node="execute_plan", data=error))
+            delta.append(
+                make_event(
+                    events=original_events + delta,
+                    task_id=state["task_id"],
+                    run_id=state["run_id"],
+                    event_type="TASK_FAILED",
+                    node="execute_plan",
+                    data=error,
+                )
+            )
             return {"status": "FAILED", "errors": [error], "completed_tasks": completed, "events": delta}
 
         batch_no += 1
-        for item in ready:
+        for item in batch.ready:
             task_ref = str(item.get("id"))
-            delta.append(make_event(
-                events=original_events + delta,
-                task_id=state["task_id"], run_id=state["run_id"],
-                event_type="PLAN_TASK_STARTED", node="execute_plan",
-                data={"planTaskId": task_ref, "taskType": item.get("type"), "batchNo": batch_no},
-            ))
+            delta.append(
+                make_event(
+                    events=original_events + delta,
+                    task_id=state["task_id"],
+                    run_id=state["run_id"],
+                    event_type="PLAN_TASK_STARTED",
+                    node="execute_plan",
+                    data={"planTaskId": task_ref, "taskType": item.get("type"), "batchNo": batch_no},
+                )
+            )
             working.update({
                 "pending_tasks": [item],
                 "completed_tasks": completed,
                 "events": original_events + delta,
             })
-            handler = knowledge_research if str(item.get("type")).lower() in _KB_TYPES else web_research
+            handler = knowledge_research if task_agent_name(str(item.get("type"))) == "knowledge_research" else web_research
             result = handler(working)
             child_events = list(result.get("events") or [])
             delta.extend(child_events)
             if result.get("status") == "FAILED":
-                failed_ids.add(task_ref)
                 completed.append({**item, "status": "FAILED", "evidenceCount": 0})
-                remaining.pop(task_ref, None)
-                delta.append(make_event(
-                    events=original_events + delta,
-                    task_id=state["task_id"], run_id=state["run_id"],
-                    event_type="PLAN_TASK_FAILED", node="execute_plan",
-                    data={"planTaskId": task_ref, "taskType": item.get("type"), "batchNo": batch_no,
-                          "code": (result.get("errors") or [{}])[0].get("code", "PLAN_TASK_FAILED")},
-                ))
-                # Preserve an auditable terminal state for every transitive dependent.
+                remaining = [row for row in remaining if str(row.get("id")) != task_ref]
+                delta.append(
+                    make_event(
+                        events=original_events + delta,
+                        task_id=state["task_id"],
+                        run_id=state["run_id"],
+                        event_type="PLAN_TASK_FAILED",
+                        node="execute_plan",
+                        data={
+                            "planTaskId": task_ref,
+                            "taskType": item.get("type"),
+                            "batchNo": batch_no,
+                            "code": (result.get("errors") or [{}])[0].get("code", "PLAN_TASK_FAILED"),
+                        },
+                    )
+                )
                 while True:
-                    blocked = [candidate for candidate in remaining.values()
-                               if set(candidate.get("dependsOn") or ()) & failed_ids]
-                    if not blocked:
+                    blocked = next_ready_batch(remaining, completed, max_parallelism=8)
+                    if not blocked.skipped:
                         break
-                    for candidate in blocked:
+                    for candidate in blocked.skipped:
                         blocked_id = str(candidate.get("id"))
-                        completed.append({**candidate, "status": "SKIPPED_DEPENDENCY_FAILED", "evidenceCount": 0})
-                        failed_ids.add(blocked_id)
-                        remaining.pop(blocked_id, None)
-                        delta.append(make_event(
-                            events=original_events + delta, task_id=state["task_id"], run_id=state["run_id"],
-                            event_type="PLAN_TASK_SKIPPED", node="execute_plan",
-                            data={"planTaskId": blocked_id, "taskType": candidate.get("type"),
-                                  "batchNo": batch_no, "reason": "SKIPPED_DEPENDENCY_FAILED"},
-                        ))
+                        completed.append(mark_skipped(candidate))
+                        remaining = [row for row in remaining if str(row.get("id")) != blocked_id]
+                        delta.append(
+                            make_event(
+                                events=original_events + delta,
+                                task_id=state["task_id"],
+                                run_id=state["run_id"],
+                                event_type="PLAN_TASK_SKIPPED",
+                                node="execute_plan",
+                                data={
+                                    "planTaskId": blocked_id,
+                                    "taskType": candidate.get("type"),
+                                    "batchNo": batch_no,
+                                    "reason": "SKIPPED_DEPENDENCY_FAILED",
+                                },
+                            )
+                        )
                 return {**result, "completed_tasks": completed, "events": delta}
             working.update(result)
             completed = list(result.get("completed_tasks") or completed)
-            completed_ids.add(task_ref)
-            evidence_count = next((int(row.get("evidenceCount") or 0) for row in reversed(completed)
-                                   if str(row.get("id")) == task_ref), 0)
-            delta.append(make_event(
-                events=original_events + delta,
-                task_id=state["task_id"], run_id=state["run_id"],
-                event_type="PLAN_TASK_COMPLETED", node="execute_plan",
-                data={"planTaskId": task_ref, "taskType": item.get("type"), "batchNo": batch_no,
-                      "evidenceCount": evidence_count},
-            ))
-            remaining.pop(task_ref, None)
+            evidence_count = next(
+                (int(row.get("evidenceCount") or 0) for row in reversed(completed) if str(row.get("id")) == task_ref),
+                0,
+            )
+            delta.append(
+                make_event(
+                    events=original_events + delta,
+                    task_id=state["task_id"],
+                    run_id=state["run_id"],
+                    event_type="PLAN_TASK_COMPLETED",
+                    node="execute_plan",
+                    data={
+                        "planTaskId": task_ref,
+                        "taskType": item.get("type"),
+                        "batchNo": batch_no,
+                        "evidenceCount": evidence_count,
+                    },
+                )
+            )
+            remaining = [row for row in remaining if str(row.get("id")) != task_ref]
 
     return {
         "pending_tasks": [],

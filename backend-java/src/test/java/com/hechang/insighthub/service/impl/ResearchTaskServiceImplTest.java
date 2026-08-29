@@ -2,6 +2,7 @@ package com.hechang.insighthub.service.impl;
 
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.mockito.ArgumentMatchers.any;
@@ -179,7 +180,9 @@ class ResearchTaskServiceImplTest {
         verify(reportMapper).deleteByTaskId("task-1");
         verify(taskEventMapper).deleteByTaskId("task-1");
         verify(taskDispatchOutboxMapper).deleteByTaskId("task-1");
-        verify(taskPlanRevisionMapper).deleteByTaskId("task-1");
+        var order = inOrder(researchTaskMapper, taskPlanRevisionMapper);
+        order.verify(researchTaskMapper).clearCurrentPlanRevision("task-1", "workspace-1");
+        order.verify(taskPlanRevisionMapper).deleteByTaskId("task-1");
         verify(researchTaskMapper).deleteCheckpointsByTaskId("task-1");
         verify(researchTaskMapper).deleteByIdAndWorkspace("task-1", "workspace-1");
         verify(sseHub).completeTask("task-1");

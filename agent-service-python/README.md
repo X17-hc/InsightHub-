@@ -1,6 +1,6 @@
 # InsightHub Agent Service（Python）
 
-第 1 周：FastAPI + LangGraph 最小三 Agent 链路（Planner / Supervisor / Researcher）。
+FastAPI + LangGraph：**Supervisor + Handoff** 多自治 Agent（Planner / 研究员 / Critic / Writer），审批与证据核验是系统闸门。
 
 ## IntelliJ：import 报红
 

@@ -48,4 +48,11 @@ describe('researchTaskApi plan endpoints', () => {
       '/v1/workspaces/workspace-1/research/tasks/task-1/reports/4/citations',
     )
   })
+
+  it('does not request citations when the report version is missing', () => {
+    expect(() => researchTaskApi.reportCitations('workspace-1', 'task-1', undefined as unknown as number)).toThrow(
+      /report version/,
+    )
+    expect(mocks.get).not.toHaveBeenCalled()
+  })
 })

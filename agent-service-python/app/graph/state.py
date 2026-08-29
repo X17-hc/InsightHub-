@@ -1,8 +1,11 @@
-"""LangGraph ResearchState 定义。"""
+"""LangGraph ResearchState 定义。
+
+events / handoff_log 用 reducer 追加，避免节点并发覆盖。
+Supervisor 只应通过 views.project_supervisor_view 读切片，不要把整份状态塞进 prompt。
+"""
 
 from __future__ import annotations
 
-import operator
 from typing import Annotated, Any, TypedDict
 
 
@@ -13,9 +16,9 @@ def _merge_events(left: list[dict[str, Any]], right: list[dict[str, Any]]) -> li
 
 class ResearchState(TypedDict, total=False):
     """
-    多智能体研究图共享状态。
+    Supervisor + 专家共享状态。
 
-    说明：events 使用 reducer 以便各节点追加事件。
+    说明：events / handoff_log 使用 reducer 以便各节点追加。
     """
 
     task_id: str
@@ -56,3 +59,8 @@ class ResearchState(TypedDict, total=False):
     plan_revision: int
     revision_instruction: str | None
     plan_hash: str | None
+    active_agent: str
+    handoff_log: Annotated[list[dict[str, Any]], _merge_events]
+    agent_inbox: dict[str, Any]
+    needs_verify: bool
+    needs_critique: bool

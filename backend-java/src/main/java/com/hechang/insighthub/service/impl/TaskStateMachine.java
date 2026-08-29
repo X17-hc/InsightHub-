@@ -22,7 +22,9 @@ public class TaskStateMachine {
         transitions.put(TaskStatus.CREATED, EnumSet.of(TaskStatus.PLANNING, TaskStatus.CANCELLED));
         transitions.put(TaskStatus.PLANNING, EnumSet.of(
                 TaskStatus.WAITING_APPROVAL, TaskStatus.RUNNING, TaskStatus.FAILED, TaskStatus.CANCELLED));
-        transitions.put(TaskStatus.WAITING_APPROVAL, EnumSet.of(TaskStatus.PLANNING, TaskStatus.RUNNING));
+        // 待确认计划时前端会显示「取消」；用户应能在执行开始前终止任务
+        transitions.put(TaskStatus.WAITING_APPROVAL, EnumSet.of(
+                TaskStatus.PLANNING, TaskStatus.RUNNING, TaskStatus.CANCELLED));
         transitions.put(TaskStatus.RUNNING, EnumSet.of(
                 TaskStatus.PAUSING,
                 TaskStatus.PAUSED,
@@ -36,7 +38,8 @@ public class TaskStateMachine {
                 TaskStatus.FAILED,
                 TaskStatus.CANCELLED));
         transitions.put(TaskStatus.PAUSED, EnumSet.of(TaskStatus.RUNNING, TaskStatus.CANCELLED));
-        transitions.put(TaskStatus.REVIEWING, EnumSet.of(TaskStatus.RUNNING, TaskStatus.GENERATING));
+        transitions.put(TaskStatus.REVIEWING, EnumSet.of(
+                TaskStatus.RUNNING, TaskStatus.GENERATING, TaskStatus.CANCELLED));
         transitions.put(TaskStatus.GENERATING, EnumSet.of(
                 TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED));
         transitions.put(TaskStatus.FAILED, EnumSet.of(TaskStatus.RUNNING));
