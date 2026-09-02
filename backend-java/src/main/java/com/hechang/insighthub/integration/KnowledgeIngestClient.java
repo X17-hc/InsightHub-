@@ -2,13 +2,17 @@ package com.hechang.insighthub.integration;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.nio.file.Path;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.MediaType;
+import org.springframework.core.io.PathResource;
+import org.springframework.http.client.MultipartBodyBuilder;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.reactive.function.client.WebClientResponseException;
+import org.springframework.web.reactive.function.BodyInserters;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import lombok.Data;
@@ -38,28 +42,29 @@ public class KnowledgeIngestClient {
             String filePath,
             String contentType,
             String fileName) {
-        Map<String, Object> body = new HashMap<>();
-        body.put("workspaceId", workspaceId);
-        body.put("knowledgeBaseId", knowledgeBaseId);
-        body.put("documentId", documentId);
-        body.put("filePath", filePath);
-        body.put("contentType", contentType);
-        body.put("fileName", fileName);
+        MultipartBodyBuilder body = new MultipartBodyBuilder();
+        body.part("workspaceId", workspaceId);
+        body.part("knowledgeBaseId", knowledgeBaseId);
+        body.part("documentId", documentId);
+        body.part("contentType", contentType == null ? "application/octet-stream" : contentType);
+        body.part("fileName", fileName == null ? "document.bin" : fileName);
+        // 仅传输文件内容；Windows 绝对路径永远不会进入跨主机协议。
+        body.part("file", new PathResource(Path.of(filePath)))
+                .filename(fileName == null ? "document.bin" : fileName);
 
         try {
             return agentWebClient.post()
-                    .uri("/internal/v1/knowledge/documents/ingest")
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .bodyValue(body)
+                    .uri("/internal/v1/knowledge/documents/ingest-content")
+                    .contentType(MediaType.MULTIPART_FORM_DATA)
+                    .body(BodyInserters.fromMultipartData(body.build()))
                     .retrieve()
                     .bodyToMono(IngestDocumentResponse.class)
                     .block();
         } catch (WebClientResponseException ex) {
             log.warn(
-                    "Knowledge ingest HTTP {} documentId={} body={}",
+                    "Knowledge ingest HTTP {} documentId={}",
                     ex.getStatusCode().value(),
-                    documentId,
-                    ex.getResponseBodyAsString());
+                    documentId);
             throw new IllegalStateException(
                     "Knowledge ingest error: HTTP " + ex.getStatusCode().value(), ex);
         }
@@ -83,10 +88,9 @@ public class KnowledgeIngestClient {
                     .block();
         } catch (WebClientResponseException ex) {
             log.warn(
-                    "Knowledge delete-by-kb HTTP {} kbId={} body={}",
+                    "Knowledge delete-by-kb HTTP {} kbId={}",
                     ex.getStatusCode().value(),
-                    knowledgeBaseId,
-                    ex.getResponseBodyAsString());
+                    knowledgeBaseId);
             throw new IllegalStateException(
                     "Knowledge delete-by-kb error: HTTP " + ex.getStatusCode().value(), ex);
         }

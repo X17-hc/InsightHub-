@@ -120,7 +120,8 @@ public class TaskExecutionServiceImpl implements TaskExecutionService {
                 return;
             }
             log.error("executeStream failed taskId={}", taskId, ex);
-            resultFinalizer.markFailed(taskId, workspaceId, null, "AGENT_STREAM_FAILED", ex.getMessage());
+            resultFinalizer.markFailed(
+                    taskId, workspaceId, null, "AGENT_STREAM_FAILED", "agent stream execution failed");
             taskControlRedis.setControl(
                     taskId,
                     TaskControlRedis.CONTROL_CANCELLED,

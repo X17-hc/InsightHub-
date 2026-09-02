@@ -20,7 +20,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectHome=true
 ProtectSystem=strict
-ReadWritePaths=/opt/insighthub/artifacts /opt/insighthub/agent
+ReadWritePaths=/opt/insighthub/artifacts /opt/insighthub/uploads /opt/insighthub/agent
 
 [Install]
 WantedBy=multi-user.target

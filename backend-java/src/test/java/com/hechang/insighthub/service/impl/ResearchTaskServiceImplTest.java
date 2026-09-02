@@ -7,6 +7,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doThrow;
 
 import java.time.LocalDateTime;
 
@@ -27,6 +28,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.hechang.insighthub.config.TaskProperties;
 import com.hechang.insighthub.exception.BusinessException;
 import com.hechang.insighthub.integration.AgentServiceClient;
+import com.hechang.insighthub.integration.AgentControlClient;
 import com.hechang.insighthub.mapper.CitationMapper;
 import com.hechang.insighthub.mapper.KnowledgeBaseMapper;
 import com.hechang.insighthub.mapper.ReportMapper;
@@ -54,6 +56,8 @@ class ResearchTaskServiceImplTest {
 
     @Mock
     private AgentServiceClient agentServiceClient;
+    @Mock
+    private AgentControlClient agentControlClient;
     @Mock
     private TaskEventMapper taskEventMapper;
     @Mock
@@ -201,6 +205,79 @@ class ResearchTaskServiceImplTest {
                 BusinessException.class, () -> service.delete("workspace-1", "task-1"));
 
         assertEquals(40900, exception.getCode());
+    }
+
+    @Test
+    void pauseSignalsAgentRedisBeforePublishingJavaControl() {
+        ResearchTask task = task("RUNNING");
+        when(accessService.requireCurrentMember("workspace-1"))
+                .thenReturn(new CurrentWorkspaceAccess("user-1", WorkspaceRole.MEMBER));
+        when(researchTaskMapper.findByIdAndWorkspace("task-1", "workspace-1")).thenReturn(task);
+        when(researchTaskMapper.findByIdAndWorkspaceForUpdate("task-1", "workspace-1")).thenReturn(task);
+        when(researchTaskMapper.updateStatusIfCurrent(
+                "task-1", "workspace-1", "RUNNING", "PAUSING", null, null)).thenReturn(1);
+        when(taskProperties.getDefaultTimeoutSeconds()).thenReturn(900);
+        runTransactionImmediately();
+
+        var response = service.pause("workspace-1", "task-1");
+
+        assertEquals("PAUSING", response.getStatus());
+        var order = inOrder(agentControlClient, taskControlRedis);
+        order.verify(agentControlClient).setControl("task-1", TaskControlRedis.CONTROL_PAUSED, 1500);
+        order.verify(taskControlRedis).setControl("task-1", TaskControlRedis.CONTROL_PAUSED, 1500);
+    }
+
+    @Test
+    void resumeAcceptsPausedTaskAndTracksNewConcurrencyPermit() {
+        ResearchTask task = task("PAUSED");
+        task.setQuery("query");
+        task.setTraceId("trace-1");
+        task.setCurrentRunId("run-1");
+        when(accessService.requireCurrentMember("workspace-1"))
+                .thenReturn(new CurrentWorkspaceAccess("user-1", WorkspaceRole.MEMBER));
+        when(researchTaskMapper.findByIdAndWorkspace("task-1", "workspace-1")).thenReturn(task);
+        when(researchTaskMapper.findByIdAndWorkspaceForUpdate("task-1", "workspace-1")).thenReturn(task);
+        when(researchTaskMapper.updateStatusIfCurrent(
+                "task-1", "workspace-1", "PAUSED", "RUNNING", null, null)).thenReturn(1);
+        when(taskProperties.getDefaultTimeoutSeconds()).thenReturn(900);
+        when(concurrencyService.tryAcquire("workspace-1", 1500)).thenReturn("permit-1");
+        runTransactionImmediately();
+
+        var response = service.resume("workspace-1", "task-1");
+
+        assertEquals("RUNNING", response.getStatus());
+        verify(slotTracker).markHeld("task-1", "workspace-1", "permit-1", 1500);
+        verify(agentControlClient).setControl("task-1", TaskControlRedis.CONTROL_RUNNING, 1500);
+        verify(taskExecutionService).executeStream(
+                "task-1", "workspace-1", "user-1", "query", "trace-1", true, "run-1", 1);
+    }
+
+    @Test
+    void resumeRestoresPausedStateWhenAgentControlFails() {
+        ResearchTask task = task("PAUSED");
+        task.setQuery("query");
+        task.setTraceId("trace-1");
+        task.setCurrentRunId("run-1");
+        when(accessService.requireCurrentMember("workspace-1"))
+                .thenReturn(new CurrentWorkspaceAccess("user-1", WorkspaceRole.MEMBER));
+        when(researchTaskMapper.findByIdAndWorkspace("task-1", "workspace-1")).thenReturn(task);
+        when(researchTaskMapper.findByIdAndWorkspaceForUpdate("task-1", "workspace-1")).thenReturn(task);
+        when(researchTaskMapper.updateStatusIfCurrent(
+                "task-1", "workspace-1", "PAUSED", "RUNNING", null, null)).thenReturn(1);
+        when(taskProperties.getDefaultTimeoutSeconds()).thenReturn(900);
+        when(concurrencyService.tryAcquire("workspace-1", 1500)).thenReturn("permit-1");
+        doThrow(new IllegalStateException("agent unavailable"))
+                .when(agentControlClient)
+                .setControl("task-1", TaskControlRedis.CONTROL_RUNNING, 1500);
+        runTransactionImmediately();
+
+        assertThrows(IllegalStateException.class, () -> service.resume("workspace-1", "task-1"));
+
+        verify(taskControlRedis).setControl("task-1", TaskControlRedis.CONTROL_PAUSED, 1500);
+        verify(agentControlClient).setControl("task-1", TaskControlRedis.CONTROL_PAUSED, 1500);
+        verify(researchTaskMapper).updateStatusIfCurrent(
+                "task-1", "workspace-1", "RUNNING", "PAUSED", null, null);
+        verify(slotTracker).releaseOnce(any(), any(), any());
     }
 
     private void runTransactionImmediately() {

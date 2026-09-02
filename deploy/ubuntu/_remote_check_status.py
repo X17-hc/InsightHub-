@@ -8,16 +8,19 @@ import sys
 import paramiko
 
 PASSWORD = os.environ.get("UBUNTU_SSH_PASSWORD")
+HOST = os.environ.get("UBUNTU_SSH_HOST", "192.168.100.129")
+USER = os.environ.get("UBUNTU_SSH_USER", "chang")
 if not PASSWORD:
     raise SystemExit("Set UBUNTU_SSH_PASSWORD")
 
 
 def main() -> int:
     c = paramiko.SSHClient()
-    c.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    c.load_system_host_keys()
+    c.set_missing_host_key_policy(paramiko.RejectPolicy())
     c.connect(
-        "192.168.125.128",
-        username="chang",
+        HOST,
+        username=USER,
         password=PASSWORD,
         timeout=20,
         allow_agent=False,

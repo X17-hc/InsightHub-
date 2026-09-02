@@ -99,9 +99,11 @@ class BoundedReAct:
                     result = matched.invoke(args)
                 except Exception as exc:  # noqa: BLE001 - 校验失败交回模型
                     invalid_tries += 1
-                    messages.append(ToolMessage(content=str(exc), tool_call_id=str(call.get("id") or name)))
+                    # 工具异常可能包含 URL、路径或第三方响应；只把稳定分类反馈给模型。
+                    safe_message = "tool input or result validation failed"
+                    messages.append(ToolMessage(content=safe_message, tool_call_id=str(call.get("id") or name)))
                     if invalid_tries >= MAX_SUBMIT_RETRIES:
-                        raise AgentOutputInvalid(str(exc)) from exc
+                        raise AgentOutputInvalid(safe_message) from exc
                     continue
                 if isinstance(result, dict) and result.get("status") == "FAILED":
                     return result

@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 
 from app.core.config import get_settings
 from app.main import app
+from app.services.control import CONTROL_PAUSED, InMemoryControlStore, reset_control_store_for_tests
 
 
 def test_internal_api_rejects_missing_token(monkeypatch):
@@ -44,3 +45,21 @@ def test_valid_internal_token_reaches_route_validation(monkeypatch):
         )
 
     assert response.status_code == 422
+
+
+def test_java_can_write_agent_local_control_store(monkeypatch):
+    monkeypatch.setenv("AGENT_INTERNAL_TOKEN", "test-internal-token")
+    get_settings.cache_clear()
+    store = InMemoryControlStore()
+    reset_control_store_for_tests(store)
+    try:
+        with TestClient(app) as client:
+            response = client.put(
+                "/internal/v1/agent/tasks/task-1/control",
+                headers={"X-Internal-Token": "test-internal-token"},
+                json={"value": "PAUSED", "ttlSeconds": 120},
+            )
+        assert response.status_code == 200
+        assert store.get("task-1") == CONTROL_PAUSED
+    finally:
+        reset_control_store_for_tests(None)

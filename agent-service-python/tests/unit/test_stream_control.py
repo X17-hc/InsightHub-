@@ -19,6 +19,8 @@ from app.services.control import (
     CONTROL_PAUSED,
     CONTROL_RUNNING,
     InMemoryControlStore,
+    ControlStoreUnavailable,
+    ResilientControlStore,
     reset_control_store_for_tests,
 )
 from app.services.runner import stream_research_task
@@ -217,3 +219,15 @@ def test_inmemory_control_ttl_expires(_memory_control: InMemoryControlStore):
     assert store.get("t1") == CONTROL_PAUSED
     time.sleep(1.1)
     assert store.get("t1") == CONTROL_RUNNING
+
+
+def test_production_control_store_fails_closed_when_redis_is_unavailable(monkeypatch):
+    import app.services.control as control_module
+
+    def unavailable(_url: str):
+        raise OSError("redis unavailable")
+
+    monkeypatch.setattr(control_module, "RedisControlStore", unavailable)
+    store = ResilientControlStore("redis://invalid", allow_memory_fallback=False)
+    with pytest.raises(ControlStoreUnavailable):
+        store.set("task-1", CONTROL_PAUSED, 120)

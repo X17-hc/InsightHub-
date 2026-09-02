@@ -142,7 +142,7 @@ public class KnowledgeServiceImpl extends ServiceImpl<KnowledgeBaseMapper, Knowl
         } catch (IOException ex) {
             throw new BusinessException(
                     com.hechang.insighthub.exception.ErrorCode.SYSTEM_ERROR,
-                    "FILE_READ_FAILED: " + ex.getMessage());
+                    "FILE_READ_FAILED: unable to read uploaded document");
         }
         String contentHash = sha256Hex(bytes);
 
@@ -168,7 +168,7 @@ public class KnowledgeServiceImpl extends ServiceImpl<KnowledgeBaseMapper, Knowl
         } catch (IOException ex) {
             throw new BusinessException(
                     com.hechang.insighthub.exception.ErrorCode.SYSTEM_ERROR,
-                    "FILE_WRITE_FAILED: " + ex.getMessage());
+                    "FILE_WRITE_FAILED: unable to store uploaded document");
         }
 
         String contentType = resolveContentType(file.getContentType(), ext);
@@ -254,11 +254,8 @@ public class KnowledgeServiceImpl extends ServiceImpl<KnowledgeBaseMapper, Knowl
             int chunkCount = result == null ? 0 : result.getChunkCount();
             updateDocumentParseStatus(documentId, workspaceId, PARSE_INDEXED, chunkCount, null);
         } catch (Exception ex) {
-            String msg = ex.getMessage() == null ? "ingest failed" : ex.getMessage();
-            if (msg.length() > 1000) {
-                msg = msg.substring(0, 1000);
-            }
-            log.warn("ingest failed documentId={}", documentId, ex);
+            String msg = "knowledge ingest failed";
+            log.warn("ingest failed documentId={} errorType={}", documentId, ex.getClass().getSimpleName());
             updateDocumentParseStatus(documentId, workspaceId, PARSE_FAILED, 0, msg);
         }
     }
@@ -336,7 +333,7 @@ public class KnowledgeServiceImpl extends ServiceImpl<KnowledgeBaseMapper, Knowl
                 row.getContentType(),
                 row.getFileSize(),
                 row.getContentHash(),
-                row.getSourceUri(),
+                "knowledge://" + row.getWorkspaceId() + "/" + row.getKnowledgeBaseId() + "/" + row.getId(),
                 row.getParseStatus(),
                 row.getChunkCount() == null ? 0 : row.getChunkCount(),
                 row.getErrorMessage(),

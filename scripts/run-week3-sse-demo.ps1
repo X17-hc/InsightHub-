@@ -38,10 +38,12 @@ function Read-SseEvents {
         [int]$TimeoutSec = 90
     )
     # SSE 不套 BaseResponse；使用 HttpWebRequest 避免程序集差异
-    $url = "$Base/api/v1/workspaces/$Ws/research/tasks/$TaskId/events?access_token=$([uri]::EscapeDataString($Token))&fromEventNo=$FromEventNo"
+    # Bearer Token 只放请求头，避免 URL 被代理、浏览器历史或访问日志持久化。
+    $url = "$Base/api/v1/workspaces/$Ws/research/tasks/$TaskId/events?fromEventNo=$FromEventNo"
     $req = [System.Net.HttpWebRequest]::Create($url)
     $req.Method = "GET"
     $req.Accept = "text/event-stream"
+    $req.Headers.Add("Authorization", "Bearer $Token")
     $req.Timeout = $TimeoutSec * 1000
     $req.ReadWriteTimeout = $TimeoutSec * 1000
     $req.KeepAlive = $true

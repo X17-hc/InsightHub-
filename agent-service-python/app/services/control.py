@@ -38,6 +38,10 @@ class ControlStore(Protocol):
     def set(self, task_id: str, value: str, ttl_seconds: int) -> None: ...
 
 
+class ControlStoreUnavailable(RuntimeError):
+    """生产环境无法保证跨 worker 控制一致性。"""
+
+
 class InMemoryControlStore:
     """进程内控制字（线程安全，支持简易 TTL）。"""
 
@@ -112,8 +116,9 @@ class ResilientControlStore:
     set 时双写：保证本进程在 Redis 抖动期间仍能读到刚写入的控制字。
     """
 
-    def __init__(self, redis_url: str) -> None:
+    def __init__(self, redis_url: str, *, allow_memory_fallback: bool = True) -> None:
         self._redis_url = redis_url
+        self._allow_memory_fallback = allow_memory_fallback
         self._memory = InMemoryControlStore()
         self._redis: RedisControlStore | None = None
         self._lock = threading.Lock()
@@ -129,22 +134,24 @@ class ResilientControlStore:
                 return None
             try:
                 self._redis = RedisControlStore(self._redis_url)
-                logger.info("ControlStore: Redis connected (%s)", self._redis_url)
+                logger.info("ControlStore: Redis connected")
                 return self._redis
             except Exception as exc:  # noqa: BLE001
                 self._next_retry_at = now + _REDIS_RETRY_SECONDS
-                logger.warning(
-                    "ControlStore: Redis unavailable, fallback InMemory (retry in %.0fs): %s",
-                    _REDIS_RETRY_SECONDS,
-                    exc,
-                )
+                logger.warning("ControlStore: Redis unavailable; retry in %.0fs errorType=%s",
+                               _REDIS_RETRY_SECONDS, type(exc).__name__)
                 return None
 
     def _invalidate_redis(self, exc: Exception) -> None:
         with self._lock:
             self._redis = None
             self._next_retry_at = time.monotonic() + _REDIS_RETRY_SECONDS
-        logger.warning("ControlStore: Redis error, will retry: %s", exc)
+        logger.warning("ControlStore: Redis error; will retry errorType=%s", type(exc).__name__)
+
+    def _fallback_or_raise(self) -> InMemoryControlStore:
+        if not self._allow_memory_fallback:
+            raise ControlStoreUnavailable("task control service is unavailable")
+        return self._memory
 
     def exists(self, task_id: str) -> bool:
         redis = self._ensure_redis()
@@ -154,7 +161,7 @@ class ResilientControlStore:
                     return True
             except Exception as exc:  # noqa: BLE001
                 self._invalidate_redis(exc)
-        return self._memory.exists(task_id)
+        return self._fallback_or_raise().exists(task_id)
 
     def get(self, task_id: str) -> str:
         redis = self._ensure_redis()
@@ -163,17 +170,20 @@ class ResilientControlStore:
                 return redis.get(task_id)
             except Exception as exc:  # noqa: BLE001
                 self._invalidate_redis(exc)
-        return self._memory.get(task_id)
+        return self._fallback_or_raise().get(task_id)
 
     def set(self, task_id: str, value: str, ttl_seconds: int) -> None:
-        # 内存始终写入，保证本进程可读
-        self._memory.set(task_id, value, ttl_seconds)
+        if self._allow_memory_fallback:
+            self._memory.set(task_id, value, ttl_seconds)
         redis = self._ensure_redis()
         if redis is not None:
             try:
                 redis.set(task_id, value, ttl_seconds)
             except Exception as exc:  # noqa: BLE001
                 self._invalidate_redis(exc)
+                self._fallback_or_raise().set(task_id, value, ttl_seconds)
+        else:
+            self._fallback_or_raise().set(task_id, value, ttl_seconds)
 
 
 _memory_store = InMemoryControlStore()
@@ -189,9 +199,14 @@ def get_control_store() -> ControlStore:
             return _store
         settings = get_settings()
         try:
-            _store = ResilientControlStore(settings.redis_url)
+            _store = ResilientControlStore(
+                settings.redis_url,
+                allow_memory_fallback=not settings.is_production(),
+            )
         except Exception as exc:  # noqa: BLE001
-            logger.warning("ControlStore: init failed, pure InMemory (%s)", exc)
+            if settings.is_production():
+                raise ControlStoreUnavailable("task control service is unavailable") from exc
+            logger.warning("ControlStore: init failed, pure InMemory errorType=%s", type(exc).__name__)
             _store = _memory_store
         return _store
 

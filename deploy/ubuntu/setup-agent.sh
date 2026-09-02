@@ -5,11 +5,11 @@ set -euo pipefail
 
 AGENT_ROOT="${AGENT_ROOT:-/opt/insighthub/agent}"
 ETC_ENV="${ETC_ENV:-/etc/insighthub/agent.env}"
-COMPOSE_FILE="${AGENT_ROOT}/deploy/centos/docker-compose.agent.yml"
-SERVICE_FILE="${AGENT_ROOT}/deploy/centos/insighthub-agent.service"
+COMPOSE_FILE="${AGENT_ROOT}/deploy/ubuntu/docker-compose.agent.yml"
+SERVICE_FILE="${AGENT_ROOT}/deploy/ubuntu/insighthub-agent.service"
 SANDBOX_CTX="${AGENT_ROOT}/agent-service-python"
 SANDBOX_IMAGE="${SANDBOX_IMAGE:-insighthub-analysis-sandbox:1.0.0}"
-HOST_ALLOW="${HOST_ALLOW:-192.168.125.0/24}"
+HOST_ALLOW="${HOST_ALLOW:-192.168.100.1}"
 
 log() { echo -e "\n==> $*"; }
 die() { echo "ERROR: $*" >&2; exit 1; }
@@ -26,6 +26,10 @@ export DEBIAN_FRONTEND=noninteractive
 apt-get update -y
 apt-get install -y ca-certificates curl git ufw python3 python3-venv python3-pip docker.io docker-compose-v2
 systemctl enable --now docker
+
+if ss -lnt | grep -Eq ':(2375|2376)[[:space:]]'; then
+  die "Docker API is listening on TCP; close ports 2375/2376 before deployment"
+fi
 
 # 国内环境默认配置 Docker Hub 镜像加速（可被已有 daemon.json 覆盖）
 if [[ ! -f /etc/docker/daemon.json ]]; then
@@ -45,9 +49,9 @@ EOF
 fi
 
 log "创建用户与目录"
-id insighthub &>/dev/null || useradd -r -m -d /opt/insighthub -s /bin/bash insighthub
+id insighthub &>/dev/null || useradd -r -m -d /opt/insighthub -s /usr/sbin/nologin insighthub
 usermod -aG docker insighthub
-mkdir -p /opt/insighthub/agent /opt/insighthub/artifacts \
+mkdir -p /opt/insighthub/agent /opt/insighthub/artifacts /opt/insighthub/uploads \
   /opt/insighthub/volumes/redis /opt/insighthub/volumes/pgvector /etc/insighthub
 chown -R insighthub:insighthub /opt/insighthub
 
@@ -66,9 +70,7 @@ resolve_token() {
   fi
   for f in \
     "${AGENT_ROOT}/.local-agent-token.txt" \
-    /home/chang/insighthub/Demo/.local-agent-token.txt \
-    "${AGENT_ROOT}/.env" \
-    /home/chang/insighthub/Demo/.env
+    "${AGENT_ROOT}/.env"
   do
     [[ -f "${f}" ]] || continue
     local t
@@ -94,6 +96,9 @@ fi
 
 log "写入 ${ETC_ENV}"
 cat > "${ETC_ENV}" <<EOF
+APP_ENV=production
+AGENT_MOCK_LLM=false
+ALLOW_SYNTHETIC_DEMO=false
 AGENT_INTERNAL_TOKEN=${TOKEN}
 POSTGRES_HOST=127.0.0.1
 POSTGRES_PORT=5432
@@ -102,6 +107,8 @@ POSTGRES_USER=insighthub
 POSTGRES_PASSWORD=${PG_PASS}
 REDIS_URL=redis://127.0.0.1:6379/0
 ARTIFACT_ROOT_DIR=/opt/insighthub/artifacts
+UPLOAD_ROOT_DIR=/opt/insighthub/uploads
+KNOWLEDGE_UPLOAD_MAX_BYTES=5242880
 SANDBOX_IMAGE=${SANDBOX_IMAGE}
 CHECKPOINT_BACKEND=postgres
 CHECKPOINT_POOL_MAX_SIZE=10
@@ -146,9 +153,11 @@ sleep 3
 systemctl --no-pager --full status insighthub-agent || true
 
 log "配置 ufw"
-ufw --force reset >/dev/null 2>&1 || true
 ufw default deny incoming
 ufw default allow outgoing
+# 只移除本项目可能遗留的宽泛规则，不重置或清空其他服务的 UFW 配置。
+ufw delete allow 8000/tcp >/dev/null 2>&1 || true
+ufw delete allow 22/tcp >/dev/null 2>&1 || true
 ufw allow from "${HOST_ALLOW}" to any port 22 proto tcp comment 'ssh-from-lan'
 ufw allow from "${HOST_ALLOW}" to any port 8000 proto tcp comment 'agent-from-lan'
 ufw --force enable
@@ -165,7 +174,7 @@ done
 
 echo
 echo "========================================"
-echo "安装完成: http://192.168.125.128:8000/health"
+echo "安装完成: http://192.168.100.129:8000/health"
 echo "env: ${ETC_ENV}"
 echo "请重启 IntelliJ 后再启动 Java"
 echo "========================================"

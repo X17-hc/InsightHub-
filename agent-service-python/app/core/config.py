@@ -55,6 +55,7 @@ class Settings(BaseSettings):
 
     # Python 只允许读取该目录内由 Java 上传的文件；相对路径按仓库根目录解析
     upload_root_dir: str = "backend-java/data/uploads"
+    knowledge_upload_max_bytes: int = 5 * 1024 * 1024
 
     # 数据分析 Sandbox：所有路径均由服务端固定，模型不能覆盖这些配置。
     sandbox_enabled: bool = True

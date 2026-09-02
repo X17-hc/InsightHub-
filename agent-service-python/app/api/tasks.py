@@ -9,21 +9,56 @@ from fastapi import APIRouter, Header, HTTPException
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from app.core.config import get_settings
-from app.schemas.protocol import AgentError, AgentTaskRequest, AgentTaskResponse, ResumeTaskRequest, PlanApprovalResumeRequest
+from app.schemas.protocol import (
+    AgentError,
+    AgentTaskRequest,
+    AgentTaskResponse,
+    PlanApprovalResumeRequest,
+    ResumeTaskRequest,
+    TaskControlRequest,
+)
+from app.services.control import ControlStoreUnavailable, get_control_store
+from app.services.idempotency_store import IdempotencyStoreUnavailable, get_idempotency_store
 from app.services.runner import approve_plan_research_task, resume_research_task, run_research_task, stream_research_task
 
 router = APIRouter()
 
-# 第 1 周进程内幂等缓存：key -> response dict（同步）或流终态标记（流式）
-_idempotency_cache: dict[str, dict] = {}
-# 流式进行中的幂等键
-_streaming_keys: set[str] = set()
+_IDEMPOTENCY_TTL_SECONDS = 24 * 60 * 60
+
+
+def _claim_ttl_seconds() -> int:
+    """RUNNING 标记只覆盖执行预算；进程崩溃后不会把同一请求锁死一整天。"""
+    return max(600, get_settings().default_timeout_seconds + 600)
+
+
+def _idempotency_unavailable(trace_id: str | None) -> JSONResponse:
+    return JSONResponse(
+        status_code=503,
+        content=AgentError(
+            code="IDEMPOTENCY_UNAVAILABLE",
+            message="durable idempotency service is unavailable",
+            traceId=trace_id,
+        ).model_dump(by_alias=True),
+    )
 
 
 @router.get("/health")
 def health() -> dict[str, str]:
     """健康检查。"""
     return {"status": "ok"}
+
+
+@router.put("/internal/v1/agent/tasks/{task_id}/control")
+def set_task_control(task_id: str, body: TaskControlRequest) -> dict[str, str]:
+    """在 Agent 本机 Redis 写入控制字，避免 Java/Agent 误用不同 Redis 实例。"""
+    try:
+        get_control_store().set(task_id, body.value, body.ttl_seconds)
+    except ControlStoreUnavailable as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "CONTROL_UNAVAILABLE", "message": "task control service is unavailable"},
+        ) from exc
+    return {"taskId": task_id, "value": body.value}
 
 
 @router.post("/internal/v1/agent/tasks", response_model=AgentTaskResponse)
@@ -45,23 +80,52 @@ def create_agent_task(
         )
         return JSONResponse(status_code=400, content=err.model_dump(by_alias=True))
 
-    if x_idempotency_key and x_idempotency_key in _idempotency_cache:
-        return AgentTaskResponse.model_validate(_idempotency_cache[x_idempotency_key])
+    claim = None
+    if x_idempotency_key:
+        store_key = f"sync:{x_idempotency_key}"
+        try:
+            claim = get_idempotency_store().claim(store_key, _claim_ttl_seconds())
+        except IdempotencyStoreUnavailable:
+            return _idempotency_unavailable(x_trace_id)
+        if not claim.acquired:
+            if claim.state == "COMPLETED" and claim.response:
+                return AgentTaskResponse.model_validate(claim.response)
+            return JSONResponse(
+                status_code=409,
+                content=AgentError(
+                    code="REQUEST_IN_PROGRESS",
+                    message="same idempotency key is already running",
+                    traceId=x_trace_id,
+                ).model_dump(by_alias=True),
+            )
 
     try:
         result = run_research_task(body, trace_id=x_trace_id)
     except Exception as exc:  # noqa: BLE001
+        if x_idempotency_key and claim and claim.owner:
+            try:
+                get_idempotency_store().release(store_key, claim.owner)
+            except IdempotencyStoreUnavailable:
+                pass
         raise HTTPException(
             status_code=500,
             detail=AgentError(
                 code="AGENT_EXECUTION_FAILED",
-                message=str(exc),
+                message="agent execution failed",
                 traceId=x_trace_id,
             ).model_dump(by_alias=True),
         ) from exc
 
-    if x_idempotency_key:
-        _idempotency_cache[x_idempotency_key] = result.model_dump(by_alias=True)
+    if x_idempotency_key and claim and claim.owner:
+        try:
+            get_idempotency_store().complete(
+                store_key,
+                claim.owner,
+                result.model_dump(by_alias=True),
+                _IDEMPOTENCY_TTL_SECONDS,
+            )
+        except IdempotencyStoreUnavailable:
+            return _idempotency_unavailable(x_trace_id)
 
     return result
 
@@ -89,26 +153,23 @@ def stream_agent_task(
         )
         return JSONResponse(status_code=400, content=err.model_dump(by_alias=True))
 
+    claim = None
     if x_idempotency_key:
-        if x_idempotency_key in _streaming_keys:
+        store_key = f"stream:{x_idempotency_key}"
+        try:
+            claim = get_idempotency_store().claim(store_key, _claim_ttl_seconds())
+        except IdempotencyStoreUnavailable:
+            return _idempotency_unavailable(x_trace_id)
+        if not claim.acquired:
+            code = "ALREADY_COMPLETED" if claim.state == "COMPLETED" else "STREAM_IN_PROGRESS"
             return JSONResponse(
                 status_code=409,
                 content=AgentError(
-                    code="STREAM_IN_PROGRESS",
-                    message="same idempotency key is already streaming; read events via Java SSE",
+                    code=code,
+                    message="idempotency key has already been accepted; read events via Java SSE",
                     traceId=x_trace_id,
                 ).model_dump(by_alias=True),
             )
-        if x_idempotency_key in _idempotency_cache:
-            return JSONResponse(
-                status_code=409,
-                content=AgentError(
-                    code="ALREADY_COMPLETED",
-                    message="idempotency key already completed; use Java SSE for events",
-                    traceId=x_trace_id,
-                ).model_dump(by_alias=True),
-            )
-        _streaming_keys.add(x_idempotency_key)
 
     def gen() -> Iterator[bytes]:
         terminal_status: str | None = None
@@ -123,15 +184,20 @@ def stream_agent_task(
                     pass
                 yield (line + "\n").encode("utf-8")
         finally:
-            if x_idempotency_key:
-                _streaming_keys.discard(x_idempotency_key)
-                # 流结束后缓存终态，避免同 key 重跑覆盖 Checkpoint
-                if terminal_status:
-                    _idempotency_cache[x_idempotency_key] = {
-                        "taskId": body.task_id,
-                        "status": terminal_status,
-                        "streamFinished": True,
-                    }
+            if x_idempotency_key and claim and claim.owner:
+                try:
+                    if terminal_status:
+                        get_idempotency_store().complete(
+                            store_key,
+                            claim.owner,
+                            {"taskId": body.task_id, "status": terminal_status, "streamFinished": True},
+                            _IDEMPOTENCY_TTL_SECONDS,
+                        )
+                    else:
+                        get_idempotency_store().release(store_key, claim.owner)
+                except IdempotencyStoreUnavailable:
+                    # HTTP 流可能已提交，不能再改写响应；服务端保持告警而不泄露 Redis 异常。
+                    pass
 
     # 显式 charset=utf-8，避免中间代理/客户端按平台编码误读中文
     return StreamingResponse(gen(), media_type="application/x-ndjson; charset=utf-8")

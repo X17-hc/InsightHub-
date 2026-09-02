@@ -8,15 +8,18 @@ import time
 
 import paramiko
 
-HOST = "192.168.125.128"
-USER = "chang"
+HOST = os.environ.get("UBUNTU_SSH_HOST", "192.168.100.129")
+USER = os.environ.get("UBUNTU_SSH_USER", "chang")
 PASSWORD = os.environ.get("UBUNTU_SSH_PASSWORD")
 if not PASSWORD:
     print("Set UBUNTU_SSH_PASSWORD env var", file=sys.stderr)
     raise SystemExit(2)
 
-LOCAL_DEMO = r"C:\Users\Dell\Project\Second\Project\Demo"
-REMOTE_HOME_DEMO = "/home/chang/insighthub/Demo"
+LOCAL_DEMO = os.environ.get("INSIGHTHUB_SOURCE_ROOT")
+if not LOCAL_DEMO:
+    raise SystemExit("Set INSIGHTHUB_SOURCE_ROOT")
+REMOTE_HOME_DEMO = os.environ.get("INSIGHTHUB_REMOTE_ROOT", "/home/chang/insighthub/InsightHub-")
+HOST_ALLOW = os.environ.get("INSIGHTHUB_WINDOWS_HOST", "192.168.100.1")
 UNIT = "insighthub-setup.service"
 LOG = "/tmp/setup-agent.log"
 
@@ -28,7 +31,8 @@ def safe_print(text: str) -> None:
 
 def main() -> int:
     client = paramiko.SSHClient()
-    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    client.load_system_host_keys()
+    client.set_missing_host_key_policy(paramiko.RejectPolicy())
     safe_print("connecting...")
     client.connect(
         HOST,
@@ -70,7 +74,7 @@ def main() -> int:
         f"systemd-run --unit={UNIT} --property=Type=oneshot "
         f"--property=RemainAfterExit=yes "
         f"--working-directory=/tmp "
-        f'/bin/bash -lc "HOST_ALLOW=192.168.125.0/24 bash /tmp/setup-agent.sh > {LOG} 2>&1"; '
+        f'/bin/bash -lc "HOST_ALLOW={HOST_ALLOW} bash /tmp/setup-agent.sh > {LOG} 2>&1"; '
         f"systemctl is-active {UNIT} || true; sleep 2; wc -c {LOG}; head -n 8 {LOG} || true'",
         90,
     )

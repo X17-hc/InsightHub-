@@ -152,6 +152,13 @@ class PlanApprovalResumeRequest(StrictModel):
     approved_plan_hash: str = Field(alias="approvedPlanHash", min_length=64, max_length=64)
 
 
+class TaskControlRequest(StrictModel):
+    """Java 写入 Agent 所在 Redis 的控制命令。"""
+
+    value: Literal["RUNNING", "PAUSED", "CANCELLED"]
+    ttl_seconds: int = Field(alias="ttlSeconds", ge=60, le=86400)
+
+
 class AgentTaskRequest(StrictModel):
     """创建 Agent 任务请求体。"""
 

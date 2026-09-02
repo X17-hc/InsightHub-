@@ -8,14 +8,17 @@ import time
 
 import paramiko
 
-HOST = "192.168.125.128"
-USER = "chang"
+HOST = os.environ.get("UBUNTU_SSH_HOST", "192.168.100.129")
+USER = os.environ.get("UBUNTU_SSH_USER", "chang")
 PASSWORD = os.environ.get("UBUNTU_SSH_PASSWORD")
 if not PASSWORD:
     raise SystemExit("Set UBUNTU_SSH_PASSWORD")
 
-LOCAL_DEMO = r"C:\Users\Dell\Project\Second\Project\Demo"
-REMOTE_HOME_DEMO = "/home/chang/insighthub/Demo"
+LOCAL_DEMO = os.environ.get("INSIGHTHUB_SOURCE_ROOT")
+if not LOCAL_DEMO:
+    raise SystemExit("Set INSIGHTHUB_SOURCE_ROOT")
+REMOTE_HOME_DEMO = os.environ.get("INSIGHTHUB_REMOTE_ROOT", "/home/chang/insighthub/InsightHub-")
+HOST_ALLOW = os.environ.get("INSIGHTHUB_WINDOWS_HOST", "192.168.100.1")
 UNIT = "insighthub-setup.service"
 LOG = "/tmp/setup-agent.log"
 
@@ -27,7 +30,8 @@ def safe_print(text: str) -> None:
 
 def main() -> int:
     client = paramiko.SSHClient()
-    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    client.load_system_host_keys()
+    client.set_missing_host_key_policy(paramiko.RejectPolicy())
     client.connect(
         HOST,
         username=USER,
@@ -85,7 +89,7 @@ def main() -> int:
             # --no-block：立即返回，安装在独立 unit 中继续
             f"systemd-run --no-block --unit={UNIT} --property=Type=oneshot "
             f"--property=RemainAfterExit=yes --working-directory=/tmp "
-            f"/bin/bash -lc 'HOST_ALLOW=192.168.125.0/24 bash /tmp/setup-agent.sh > {LOG} 2>&1'; "
+            f"/bin/bash -lc 'HOST_ALLOW={HOST_ALLOW} bash /tmp/setup-agent.sh > {LOG} 2>&1'; "
             f"sleep 2; systemctl is-active {UNIT} || true; head -n 5 {LOG} || true"
         )
         run("sudo -S bash -lc " + repr(inner), timeout=60)

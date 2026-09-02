@@ -61,10 +61,9 @@ public class AgentServiceClient {
         } catch (WebClientResponseException ex) {
             // 上游 body 仅记日志，避免泄漏到对外 API
             log.warn(
-                    "Agent service HTTP {} taskId={} body={}",
+                    "Agent service HTTP {} taskId={}",
                     ex.getStatusCode().value(),
-                    taskId,
-                    ex.getResponseBodyAsString());
+                    taskId);
             throw new IllegalStateException("Agent service error: HTTP " + ex.getStatusCode().value(), ex);
         }
     }

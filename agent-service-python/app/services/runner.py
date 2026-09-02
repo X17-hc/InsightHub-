@@ -166,7 +166,7 @@ def run_research_task(request: AgentTaskRequest, trace_id: str | None = None) ->
             run_id=run_id,
             event_type="TASK_FAILED",
             node=None,
-            data={"code": "TASK_ALREADY_RUNNING", "message": str(exc)},
+            data={"code": "TASK_ALREADY_RUNNING", "message": "task is already running"},
         )
         return AgentTaskResponse(
             taskId=request.task_id,
@@ -174,7 +174,7 @@ def run_research_task(request: AgentTaskRequest, trace_id: str | None = None) ->
             status="FAILED",
             reportMarkdown=None,
             events=[AgentEvent.model_validate(e) for e in (initial_events + [fail_event])],
-            error=AgentError(code="TASK_ALREADY_RUNNING", message=str(exc), traceId=trace),
+            error=AgentError(code="TASK_ALREADY_RUNNING", message="task is already running", traceId=trace),
         )
     except Exception as exc:  # noqa: BLE001
         code, message = _classify_execution_failure(exc)
@@ -291,7 +291,7 @@ def stream_research_task(
             run_id=run_id,
             status="FAILED",
             report_markdown=None,
-            error={"code": "TASK_ALREADY_RUNNING", "message": str(exc), "traceId": trace},
+            error={"code": "TASK_ALREADY_RUNNING", "message": "task is already running", "traceId": trace},
         )
 
 
@@ -350,7 +350,7 @@ def resume_research_task(
             run_id=run,
             status="FAILED",
             report_markdown=None,
-            error={"code": "TASK_ALREADY_RUNNING", "message": str(exc), "traceId": trace},
+            error={"code": "TASK_ALREADY_RUNNING", "message": "task is already running", "traceId": trace},
         )
 
 
@@ -375,7 +375,7 @@ def approve_plan_research_task(
                                      resume=True)
     except TaskExecutionConflict as exc:
         yield _task_result_line(task_id=task_id, run_id=run_id, status="FAILED", report_markdown=None,
-                                error={"code": "TASK_ALREADY_RUNNING", "message": str(exc), "traceId": context.trace_id})
+                                error={"code": "TASK_ALREADY_RUNNING", "message": "task is already running", "traceId": context.trace_id})
 
 
 def _stream_graph(

@@ -46,7 +46,8 @@ public class TaskDispatchExecutor {
             taskExecutionService.executeDispatch(command);
             mapper.markDispatched(outboxId);
         } catch (Exception ex) {
-            String error = abbreviate(ex.getMessage());
+            // Outbox 中只保存稳定错误分类；底层异常可能携带 URL、响应体或文件路径。
+            String error = "task dispatch failed: " + ex.getClass().getSimpleName();
             if (row.getAttemptCount() >= taskProperties.getDispatchMaxAttempts()) {
                 mapper.markFailed(outboxId, error);
                 if (researchTaskMapper.failDispatchIfCurrentRun(row.getTaskId(), row.getWorkspaceId(), row.getRunId(),
@@ -60,8 +61,4 @@ public class TaskDispatchExecutor {
         }
     }
 
-    private static String abbreviate(String value) {
-        if (value == null) return "dispatch failed";
-        return value.length() <= 1024 ? value : value.substring(0, 1024);
-    }
 }

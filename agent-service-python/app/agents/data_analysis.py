@@ -1,5 +1,6 @@
 """Data-analysis graph node; it only receives verified, bounded evidence."""
 from __future__ import annotations
+import logging
 from typing import Any
 from langgraph.config import get_stream_writer
 from app.graph.events import make_event
@@ -7,6 +8,8 @@ from app.graph.limits import claim_step
 from app.graph.state import ResearchState
 from app.services.analysis_sandbox import SandboxUnavailable, run_analysis
 from app.services.artifacts import save_all
+
+logger = logging.getLogger(__name__)
 
 def _emit(event: dict[str, Any]) -> None:
     """尽力把脱敏 Sandbox 事件写入当前 LangGraph custom stream。
@@ -35,10 +38,14 @@ def data_analysis(state: ResearchState) -> dict[str, Any]:
         artifacts = run_analysis(task_id=task_id, workspace_id=state["workspace_id"], run_id=run_id, evidence=evidence)
         save_all(artifacts)
     except SandboxUnavailable as exc:
-        failed = make_event(events=events + [start], task_id=task_id, run_id=run_id, event_type="SANDBOX_FAILED", node="data_analysis", data={"code": "SANDBOX_UNAVAILABLE", "message": str(exc)})
-        _emit(failed); return {"step_count": step, "status": "FAILED", "errors": [{"code": "SANDBOX_UNAVAILABLE", "message": str(exc)}], "events": [start, failed]}
+        logger.warning("sandbox unavailable taskId=%s errorType=%s", task_id, type(exc).__name__)
+        message = "sandbox runtime is unavailable"
+        failed = make_event(events=events + [start], task_id=task_id, run_id=run_id, event_type="SANDBOX_FAILED", node="data_analysis", data={"code": "SANDBOX_UNAVAILABLE", "message": message})
+        _emit(failed); return {"step_count": step, "status": "FAILED", "errors": [{"code": "SANDBOX_UNAVAILABLE", "message": message}], "events": [start, failed]}
     except Exception as exc:
-        failed = make_event(events=events + [start], task_id=task_id, run_id=run_id, event_type="SANDBOX_FAILED", node="data_analysis", data={"code": "SANDBOX_FAILED", "message": str(exc)})
-        _emit(failed); return {"step_count": step, "status": "FAILED", "errors": [{"code": "SANDBOX_FAILED", "message": str(exc)}], "events": [start, failed]}
+        logger.exception("sandbox execution failed taskId=%s errorType=%s", task_id, type(exc).__name__)
+        message = "sandbox execution failed"
+        failed = make_event(events=events + [start], task_id=task_id, run_id=run_id, event_type="SANDBOX_FAILED", node="data_analysis", data={"code": "SANDBOX_FAILED", "message": message})
+        _emit(failed); return {"step_count": step, "status": "FAILED", "errors": [{"code": "SANDBOX_FAILED", "message": message}], "events": [start, failed]}
     done = make_event(events=events + [start], task_id=task_id, run_id=run_id, event_type="SANDBOX_COMPLETED", node="data_analysis", data={"artifactCount": len(artifacts), "artifacts": [{"id": x["id"], "title": x["title"], "mimeType": x["mimeType"]} for x in artifacts]})
     _emit(done); return {"step_count": step, "analysis_artifacts": artifacts, "events": [start, done]}

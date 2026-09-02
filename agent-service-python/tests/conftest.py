@@ -13,6 +13,7 @@ os.environ["EXECUTION_LEASE_WAIT_SECONDS"] = "0"
 from app.core.config import get_settings
 from app.graph.builder import reset_graph_for_tests
 from app.services.execution_lease import reset_execution_lease_store_for_tests
+from app.services.idempotency_store import InMemoryIdempotencyStore, reset_idempotency_store_for_tests
 
 
 @pytest.fixture(autouse=True)
@@ -21,7 +22,9 @@ def _reset_graph_runtime():
     get_settings.cache_clear()
     reset_graph_for_tests()
     reset_execution_lease_store_for_tests()
+    reset_idempotency_store_for_tests(InMemoryIdempotencyStore())
     yield
     reset_graph_for_tests()
     reset_execution_lease_store_for_tests()
+    reset_idempotency_store_for_tests()
     get_settings.cache_clear()

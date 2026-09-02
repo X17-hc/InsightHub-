@@ -219,7 +219,7 @@ public class AgentStreamClient {
         } catch (IllegalStateException ex) {
             throw ex;
         } catch (Exception ex) {
-            throw new IllegalStateException("Agent stream failed: " + ex.getMessage(), ex);
+            throw new IllegalStateException("Agent stream transport failed", ex);
         }
     }
 

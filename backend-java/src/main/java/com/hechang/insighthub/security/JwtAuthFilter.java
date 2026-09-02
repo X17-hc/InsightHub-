@@ -65,13 +65,6 @@ public class JwtAuthFilter extends OncePerRequestFilter {
             String header = request.getHeader(HttpHeaders.AUTHORIZATION);
             if (header != null && header.startsWith("Bearer ")) {
                 token = header.substring(7).trim();
-            } else if (isSseEventsPath(request)) {
-                // 历史 EventSource 兼容路径。query token 可能进入代理日志、浏览器历史和
-                // Referrer；当前 fetch-based SSE 已能携带 Authorization，应尽快移除该分支。
-                String q = request.getParameter("access_token");
-                if (q != null && !q.isBlank()) {
-                    token = q.trim();
-                }
             }
             if (token != null && !token.isEmpty()) {
                 try {
@@ -96,15 +89,6 @@ public class JwtAuthFilter extends OncePerRequestFilter {
             }
         }
         filterChain.doFilter(request, response);
-    }
-
-    /** 仅研究任务事件 SSE 路径可使用 query token。 */
-    private static boolean isSseEventsPath(HttpServletRequest request) {
-        String uri = request.getRequestURI();
-        if (uri == null) {
-            return false;
-        }
-        return uri.contains("/research/tasks/") && uri.endsWith("/events");
     }
 
     /** JWT 路径只需身份与启用状态，不加载 password_hash */

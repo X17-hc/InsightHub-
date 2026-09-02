@@ -53,7 +53,7 @@ insighthub:
     dispatch-max-attempts: ${TASK_DISPATCH_MAX_ATTEMPTS:5}
   jwt:
     # 至少 32 字节；未配置时拒绝启动
-    secret: ${JWT_SECRET:dGhpcyBpcyBhIHZlcnkgbG9uZyBhbmQgc2VjdXJlIHNlY3JldCBrZXkgZm9yIGp3dCB0b2tlbiBnZW5lcmF0aW9u}
+    secret: ${JWT_SECRET:}
     access-expire-minutes: 120
     refresh-expire-days: 7
   demo:
