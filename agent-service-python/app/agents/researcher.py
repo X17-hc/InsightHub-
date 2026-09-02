@@ -26,7 +26,7 @@ _SYNTHETIC_SYSTEM = """你是研究助理。在没有实时搜索结果时，请
 
 
 def _mock_evidence(query: str) -> list[dict[str, Any]]:
-    """确定性合成证据（单测 / 无 Key）。"""
+    """生成确定性合成证据，仅允许单测或显式开发演示模式调用。"""
     return [
         {
             "title": f"Overview related to {query[:48]}",
@@ -70,6 +70,11 @@ def _to_evidence(items: list[dict[str, Any]], task_ref: str) -> list[dict[str, A
 
 
 def _canonical_url(value: str) -> str:
+    """规范化 HTTP(S) URL，用于同一报告内去重。
+
+    移除 fragment、默认端口和常见追踪参数，但不把不同 path/query 的页面错误
+    合并。返回空串表示 URL 不具备可核验的 Web 来源身份。
+    """
     try:
         parts = urlsplit(value.strip())
         if parts.scheme.lower() not in {"http", "https"} or not parts.hostname:
@@ -89,7 +94,12 @@ def _canonical_url(value: str) -> str:
 
 def web_research(state: ResearchState) -> dict[str, Any]:
     """
-    Researcher 节点：对 pending web_research 任务收集证据。
+    Researcher 节点：对 pending web_research 任务发现并抓取候选来源。
+
+    Tavily 摘要只用于来源发现，不能直接标记 VERIFIED。每个候选 URL 还必须
+    经 SSRF 防护抓取页面，并由证据核验器确认摘录来自实际正文；抓取或匹配失败
+    的来源保留为 CANDIDATE。production 搜索不可用时失败关闭，禁止生成
+    SYNTHETIC 证据。
 
     Returns:
         evidence / completed_tasks / events 等状态增量。

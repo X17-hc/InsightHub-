@@ -27,14 +27,19 @@ from app.agents.writer import finalize, write_report
 from app.core.config import get_settings
 from app.graph.state import ResearchState
 
-# Checkpoint 单例，thread_id=taskId:runId
+# Checkpoint 只负责持久化图状态；它不提供执行互斥。相同任务的并发执行仍由
+# execution lease 阻止。thread_id 使用 taskId:runId 隔离重试轮次。
 _checkpointer: BaseCheckpointSaver[Any] | None = None
 _checkpoint_pool: Any | None = None
 _compiled = None
 
 
 def wait_for_approval(state: ResearchState) -> dict[str, Any]:
-    """PLAN 阶段暂停；Java 使用 Command(resume=...) 从同一节点恢复。"""
+    """在 PLAN/EXECUTE 边界中断，并仅接受与当前计划哈希匹配的审批。
+
+    Java 必须以同一 taskId/runId 发送 ``Command(resume=...)``。哈希比较把
+    审批决定绑定到不可变计划版本，禁止旧页面或迟到请求批准新计划。
+    """
 
     if not state.get("require_plan_approval"):
         return {"phase": "EXECUTE", "approved": True, "status": "RUNNING"}
@@ -124,12 +129,12 @@ atexit.register(_close_checkpointer)
 
 
 def _route_after_node(state: ResearchState) -> str:
-    """任一节点失败后立即终止，禁止后续节点覆盖终态。"""
+    """返回 ``stop`` 或 ``continue``；失败状态必须立即进入 END。"""
     return "stop" if state.get("status") == "FAILED" else "continue"
 
 
 def _route_after_planner(state: ResearchState) -> str:
-    """Planner 后：失败结束；需审批则 HITL；否则回 Supervisor。"""
+    """Planner 后路由：失败停止、未审批进入 HITL，其余回 Supervisor。"""
     if state.get("status") == "FAILED":
         return "stop"
     if state.get("require_plan_approval") and not state.get("approved"):
@@ -138,6 +143,11 @@ def _route_after_planner(state: ResearchState) -> str:
 
 
 def _route_after_critic(state: ResearchState) -> str:
+    """保留 Critic 的 supplement/write/stop 语义，并按开关插入分析节点。
+
+    Critic 的质量 FAIL 可以生成带限制说明的报告；只有执行状态 FAILED 才是
+    ``stop``。数据分析也只能位于证据核验之后、报告写作之前。
+    """
     route = route_after_critic(state)
     return "analysis" if route == "write" and state.get("enable_data_analysis") else route
 
@@ -146,7 +156,9 @@ def build_graph(checkpointer: BaseCheckpointSaver[Any] | None = None):
     """
     编译 Supervisor 主循环图。
 
-    Supervisor 用 Command(goto=...) 选择专家；审批 / 核验 / finalize 走固定边。
+    Supervisor 用 Command(goto=...) 选择专家；审批、核验与 finalize 是固定
+    系统闸门，不能由模型绕过。Sandbox 失败会形成规范失败事件，不允许后续
+    Writer 用不完整产物覆盖终态。
     """
     graph = StateGraph(ResearchState)
     graph.add_node("supervisor", run_supervisor)

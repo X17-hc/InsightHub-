@@ -191,7 +191,10 @@ def _append_guard_sections(report: str, state: ResearchState) -> str:
 
 def _sanitize_llm_report(report: str, state: ResearchState) -> str:
     """
-    后置校验 LLM 报告：无 verified 或结论区泄漏未验证摘录时回退模板。
+    后置校验 LLM 报告：无 VERIFIED 或结论区泄漏候选摘录时回退模板。
+
+    这是模型输出之后的最后一道证据边界：候选来源可以出现在“限制”部分，但不能
+    支撑研究发现。回退模板仍保留质量结论和限制，不会把质量 FAIL 改成执行异常。
 
     Returns:
         合规 Markdown 报告。
@@ -212,7 +215,12 @@ def _sanitize_llm_report(report: str, state: ResearchState) -> str:
 
 
 def write_report(state: ResearchState) -> dict[str, Any]:
-    """基于 verified 证据生成 Markdown 报告。"""
+    """仅以 VERIFIED 证据生成 Markdown 报告并建立版本内引用。
+
+    流式 REPORT_DELTA 按 index 递增；最后一个 delta 标记 done。流式调用失败时
+    允许在剩余 deadline 内退回一次非流式调用，但不能回退到 synthetic 报告。
+    引用编号由规范化后的证据顺序确定，候选来源只进入限制说明。
+    """
     settings = get_settings()
     step, limit_failure = claim_step(state, "write_report")
     if limit_failure is not None:
@@ -358,7 +366,12 @@ def write_report(state: ResearchState) -> dict[str, Any]:
 
 
 def finalize(state: ResearchState) -> dict[str, Any]:
-    """收尾节点：标记任务完成。"""
+    """形成规范任务终态和不可变质量快照。
+
+    ``TASK_COMPLETED`` 是图内过程事件；Java 真正持久化报告、引用和任务投影时
+    依赖随后构造的 ``TASK_RESULT`` 协议终态。Critic FAIL 仍返回 COMPLETED，
+    而执行异常不得进入本节点。
+    """
     if state.get("status") == "FAILED":
         return {}
     events = list(state.get("events") or [])

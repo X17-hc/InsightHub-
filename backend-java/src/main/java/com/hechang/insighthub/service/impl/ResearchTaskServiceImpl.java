@@ -49,7 +49,11 @@ import com.mybatisflex.spring.service.impl.ServiceImpl;
 import lombok.RequiredArgsConstructor;
 
 /**
- * 研究任务：异步流式 + 同步兼容 + 控制面实现。
+ * 研究任务命令应用服务：创建、控制、重试与计划操作协调。
+ *
+ * <p>单表 CRUD 继承 MyBatis-Flex ServiceImpl；多实体事务通过 Mapper/协作服务
+ * 显式编排。远程 Agent、SSE、Redis 和线程池提交必须位于短事务之外。当前类仍
+ * 同时承担同步兼容与查询委托，后续拆分应保留 Controller 只依赖 Service 接口。</p>
  */
 @Service
 @RequiredArgsConstructor

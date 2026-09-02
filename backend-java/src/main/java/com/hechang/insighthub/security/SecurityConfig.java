@@ -25,6 +25,8 @@ import lombok.RequiredArgsConstructor;
  * Spring Security：JWT 无状态会话。
  *
  * <p>SSE 使用 Servlet 异步派发；SecurityContext 仓库见 {@link SecurityContextConfig}。
+ * REST API 仅接受 JWT，不创建 HTTP Session。CSRF 关闭的前提是认证凭据不由浏览器
+ * Cookie 自动附带；若未来改用 Cookie，必须重新启用 CSRF 防护。</p>
  */
 @Configuration
 @EnableWebSecurity
@@ -51,7 +53,8 @@ public class SecurityConfig {
         http.csrf(csrf -> csrf.disable())
                 .cors(Customizer.withDefaults())
                 .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
-                // B：ASYNC 派发时从 request 恢复登录态；变更后自动保存到 Repository
+                // ASYNC 派发从 request-scoped Repository 恢复登录态；它不创建服务端
+                // Session，仅用于同一个 SSE 请求的异步 dispatch。
                 .securityContext(securityContext -> securityContext
                         .securityContextRepository(securityContextRepository)
                         .requireExplicitSave(false))
@@ -62,7 +65,7 @@ public class SecurityConfig {
                                     "/api/v1/auth/refresh",
                                     "/api/v1/health")
                             .permitAll();
-                    // 文档匿名开关：生产可设 insighthub.docs.public-access=false
+                    // 文档匿名访问由显式配置控制；生产应关闭，避免公开内部接口模型。
                     if (docsProperties.isPublicAccess()) {
                         auth.requestMatchers(DOC_PATHS).permitAll();
                     }

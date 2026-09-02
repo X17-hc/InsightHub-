@@ -23,6 +23,7 @@ public interface ResearchTaskMapper extends BaseMapper<ResearchTask> {
     }
 
     default ResearchTask findByIdAndWorkspaceForUpdate(String id, String workspaceId) {
+        // 报告版本及任务投影写入前锁定任务行；事务外调用会失去并发保护。
         return selectOneByQuery(QueryWrapper.create()
                 .eq(ResearchTask::getId, id)
                 .eq(ResearchTask::getWorkspaceId, workspaceId)
@@ -36,6 +37,7 @@ public interface ResearchTaskMapper extends BaseMapper<ResearchTask> {
     }
 
     default int deleteByIdAndWorkspace(String taskId, String workspaceId) {
+        // workspaceId 必须进入 DELETE 条件，防止已知 taskId 被跨租户删除。
         return deleteByQuery(QueryWrapper.create()
                 .eq(ResearchTask::getId, taskId)
                 .eq(ResearchTask::getWorkspaceId, workspaceId));
@@ -46,6 +48,7 @@ public interface ResearchTaskMapper extends BaseMapper<ResearchTask> {
     }
 
     default int clearCurrentPlanRevision(String taskId, String workspaceId) {
+        // 删除任务前显式清空当前修订外键；UpdateEntity 能表达“写入 null”。
         ResearchTask row = UpdateEntity.of(ResearchTask.class);
         row.setCurrentPlanRevisionId(null);
         return updateByQuery(row, QueryWrapper.create()
@@ -84,6 +87,7 @@ public interface ResearchTaskMapper extends BaseMapper<ResearchTask> {
     default int updateStatusIfCurrent(
             String id, String workspaceId, String fromStatus, String toStatus,
             Integer progress, String currentNode) {
+        // fromStatus 是 CAS 条件；返回 0 表示状态已被其他控制请求推进。
         ResearchTask row = UpdateEntity.of(ResearchTask.class);
         row.setStatus(toStatus);
         if (progress != null) {
@@ -179,6 +183,7 @@ public interface ResearchTaskMapper extends BaseMapper<ResearchTask> {
 
     default int failDispatchIfCurrentRun(
             String id, String workspaceId, String runId, String errorCode, String errorMessage) {
+        // 同时限定 runId 和活动状态，迟到的旧派发失败不得覆盖新一轮重试。
         ResearchTask row = UpdateEntity.of(ResearchTask.class);
         row.setStatus("FAILED");
         row.setErrorCode(errorCode);

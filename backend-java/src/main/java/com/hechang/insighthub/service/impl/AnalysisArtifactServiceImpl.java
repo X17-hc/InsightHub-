@@ -25,7 +25,13 @@ import com.hechang.insighthub.service.AnalysisArtifactService;
 import com.hechang.insighthub.service.WorkspaceAccessService;
 import lombok.RequiredArgsConstructor;
 
-/** Java public-boundary proxy for Agent-owned artifact metadata and bytes. */
+/**
+ * Agent 所有产物在 Java 公共边界上的安全代理。
+ *
+ * <p>Java 先验证当前用户的工作空间成员身份和任务归属，Agent 再以
+ * workspaceId/taskId/artifactId 精确查询。公开 DTO 不得包含 storageUri 或宿主机
+ * 路径；即使 Agent 已校验，Java 仍二次限制 MIME、文件名和大小。</p>
+ */
 @Service
 @RequiredArgsConstructor
 public class AnalysisArtifactServiceImpl implements AnalysisArtifactService {
@@ -85,6 +91,8 @@ public class AnalysisArtifactServiceImpl implements AnalysisArtifactService {
     }
 
     private void streamTo(java.io.OutputStream output, String taskId, String artifactId, String workspaceId) {
+        // HEAD 的 Content-Length 不是可信安全边界，流式读取仍累计实际字节数；
+        // DataBuffer 无论成功或异常都必须释放，避免 Netty 直接内存泄漏。
         AtomicLong transferred = new AtomicLong();
         try {
             agentWebClient.get().uri(uri -> artifactUri(uri, taskId, artifactId, workspaceId)).exchangeToFlux(response -> {
@@ -157,6 +165,7 @@ public class AnalysisArtifactServiceImpl implements AnalysisArtifactService {
     }
 
     private static AnalysisArtifactResponse publicRow(Map<String, Object> row) {
+        // 显式重建白名单 DTO，不把 Agent 返回 Map 中未来新增的私有字段透传到浏览器。
         String mime = String.valueOf(row.getOrDefault("mimeType", ""));
         if (!ALLOWED_MIME.contains(mime)) throw BusinessException.badRequest("ARTIFACT_MIME_REJECTED", "artifact MIME type is not allowed");
         long size = row.get("size") instanceof Number n ? n.longValue() : 0L;

@@ -26,7 +26,11 @@ _WEB_TYPES = WEB_TYPES
 
 
 def dispatch_tasks(state: ResearchState) -> dict[str, Any]:
-    """从计划提取待执行任务（单测与旧节点兼容）。"""
+    """从计划提取待执行任务，供旧 Checkpoint 与调度单测兼容。
+
+    主运行图由 ``runtime.supervisor`` 发起 handoff；这里不得被当作生产图的
+    唯一调度入口，否则恢复语义会与新的 Supervisor 状态不一致。
+    """
     step, limit_failure = claim_step(state, "dispatch_tasks")
     if limit_failure is not None:
         return limit_failure
@@ -73,7 +77,12 @@ def dispatch_tasks(state: ResearchState) -> dict[str, Any]:
 
 
 def execute_plan(state: ResearchState) -> dict[str, Any]:
-    """按 DAG 同步执行（单测用）。主图改为 Supervisor handoff 到专家。"""
+    """按 DAG 同步执行的测试兼容实现。
+
+    ``max_parallelism`` 只限制每个 ready 批次的宽度；下面的 for 循环仍是
+    串行调用专家，不应据此宣称该兼容路径提供真正的线程级并行。生产主图
+    已改由 Supervisor handoff 驱动。
+    """
     working: dict[str, Any] = dict(state)
     original_events = list(state.get("events") or [])
     delta: list[dict[str, Any]] = []
@@ -83,6 +92,8 @@ def execute_plan(state: ResearchState) -> dict[str, Any]:
     batch_no = 0
 
     while remaining:
+        # ready 集只包含依赖全部成功的节点；失败依赖先传播为 SKIPPED，
+        # 避免后继节点基于不完整证据继续执行。
         batch = next_ready_batch(remaining, completed, max_parallelism=max_parallelism)
         for item in batch.skipped:
             task_ref = str(item.get("id"))

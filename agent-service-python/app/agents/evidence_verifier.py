@@ -1,4 +1,4 @@
-"""证据验证：策略端口 + 规则实现（Day3）；后续可替换为 LLM 评测。"""
+"""证据核验边界：把来源发现结果分类为 VERIFIED、CANDIDATE 或 SYNTHETIC。"""
 
 from __future__ import annotations
 
@@ -28,9 +28,10 @@ class RuleEvidenceVerifier:
     """
     规则核验策略。
 
-    - 非空 quotedText（至少 20 字）+ 有效 sourceTitle/sourceUri → 可标 verified
-    - SYNTHETIC 永远不允许成为已核验证据
-    - 重复 URI / 空摘要 / 过短摘录 → 未验证
+    WEB 证据只有在抓取元数据完整、HTTP 成功且上游已确认摘录来自正文时才能
+    保持 VERIFIED；KNOWLEDGE 证据必须带 documentId/chunkId。搜索摘要本身不是
+    已核验证据。SYNTHETIC 永远不能升级为 VERIFIED，重复 URI、空摘要和过短摘录
+    都降级为 CANDIDATE。
     """
 
     _MIN_QUOTE_LEN = 20
@@ -132,7 +133,11 @@ def default_verifier() -> RuleEvidenceVerifier:
 
 def merge_evidence(state: ResearchState) -> dict[str, Any]:
     """
-    合并并核验证据节点：写回 verified 标志，供 Critic / Writer 消费。
+    合并并核验证据节点：写回核验分类，供 Critic / Writer 消费。
+
+    分类是单向防御：本节点可以把不满足条件的上游 VERIFIED 降级，但不能凭标题、
+    URL 或搜索摘要自行升级候选来源。Writer 只能从 verified_evidence_ids 对应证据
+    建立结论。
 
     Returns:
         evidence / verified_evidence_ids / events / step_count 增量。

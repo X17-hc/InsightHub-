@@ -30,6 +30,10 @@ import reactor.netty.http.client.HttpClient;
 
 /**
  * 消费 Python Agent NDJSON 流。
+ *
+ * <p>该适配器只负责 HTTP 与行协议，不写数据库、不推进任务状态。网络缓冲区可能
+ * 在任意字节位置切割 UTF-8/换行，因此必须按字节累积完整行并限制单行大小；
+ * 业务持久化异常必须向上抛出，不能被当作坏 JSON 跳过。</p>
  */
 @Component
 @RequiredArgsConstructor
@@ -149,6 +153,8 @@ public class AgentStreamClient {
     }
 
     private void consumeNdjson(Flux<DataBuffer> flux, Consumer<JsonNode> onLine) {
+        // DataBuffer 必须在复制后立即释放；MAX_BUFFER_CHARS 防止缺失换行的响应
+        // 无界占用堆。坏行允许少量跳过以容忍代理噪声，超过阈值后终止整个协议。
         ByteArrayOutputStream buf = new ByteArrayOutputStream();
         AtomicInteger badLines = new AtomicInteger();
         try {
@@ -189,8 +195,8 @@ public class AgentStreamClient {
                                 }
                                 continue;
                             }
-                            // Business/persistence failures must abort the stream. Treating them as
-                            // malformed JSON previously left the event durable but its projection missing.
+                            // 回调异常代表落库或状态投影失败，必须终止流；若误当成解析错误
+                            // 继续消费，会形成“事件已存在但任务投影未更新”的分裂状态。
                             onLine.accept(node);
                         }
                     })

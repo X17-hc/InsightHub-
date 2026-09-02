@@ -52,7 +52,12 @@ class InMemoryExecutionLeaseStore:
 
 
 class RedisExecutionLeaseStore:
-    """Redis 原子租约，租约超时后自动释放。"""
+    """Redis 原子租约，租约超时后自动释放。
+
+    acquire 使用 SET NX EX，release 通过 compare-and-delete Lua，迟到的旧执行者
+    不能删除新执行者的租约。租约当前不续期，因此 TTL 必须覆盖任务 deadline 和
+    收尾余量；若以后允许延长任务时长，必须同时增加续租机制。
+    """
 
     _RELEASE_SCRIPT = """
     if redis.call('get', KEYS[1]) == ARGV[1] then
@@ -94,7 +99,11 @@ _store_lock = threading.Lock()
 
 
 def get_execution_lease_store() -> ExecutionLeaseStore:
-    """构造租约存储；持久化模式下 Redis 不可用时拒绝执行。"""
+    """构造进程级租约客户端；持久化 checkpoint 模式下 Redis 故障时失败关闭。
+
+    内存租约只允许 memory checkpoint 的测试/单进程场景，多 worker 不能依赖它
+    防止重复驱动同一张图。
+    """
     global _store
     with _store_lock:
         if _store is not None:
@@ -112,7 +121,11 @@ def get_execution_lease_store() -> ExecutionLeaseStore:
 
 @contextmanager
 def hold_task_execution(task_id: str, ttl_seconds: int) -> Iterator[None]:
-    """在上下文生命周期内独占任务执行权。"""
+    """在上下文生命周期内独占任务执行权，并按 token 安全释放。
+
+    该租约覆盖新建、普通恢复和审批恢复；它提供 at-most-one active driver，
+    不提供 exactly-once 事件或结果持久化语义。
+    """
     store = get_execution_lease_store()
     token = uuid.uuid4().hex
     wait_seconds = max(0, get_settings().execution_lease_wait_seconds)

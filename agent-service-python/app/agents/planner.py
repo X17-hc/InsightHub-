@@ -27,7 +27,11 @@ _PLANNER_SYSTEM = """你是 InsightHub Planner。只输出 JSON，不调用工�
 
 
 def _mock_plan(query: str, has_kb: bool) -> Plan:
-    """无 LLM 时的确定性计划。"""
+    """生成测试/演示环境使用的确定性计划。
+
+    production 会在任务入口拒绝 mock 配置，因此该函数不能作为 LLM
+    或真实检索故障时的降级路径，避免把合成计划伪装成正式研究结果。
+    """
     tasks = []
     if has_kb:
         tasks.append(
@@ -53,7 +57,11 @@ def _mock_plan(query: str, has_kb: bool) -> Plan:
 
 def create_plan(state: ResearchState) -> dict[str, Any]:
     """
-    Planner 节点：生成研究计划并写入状态。
+    Planner 节点：生成、校验研究 DAG，并写入稳定的计划哈希。
+
+    除调用 LLM 外不执行检索 I/O。新计划必须先通过 ``validate_new_plan``；
+    ``plan_hash`` 是 Java 审批恢复时的绑定依据，任何修订都必须产生新哈希，
+    防止用户批准的版本与实际执行版本不一致。
 
     Returns:
         状态增量（plan / events / step_count 等）。

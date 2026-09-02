@@ -11,14 +11,19 @@ import org.springframework.stereotype.Service;
 import com.openhtmltopdf.pdfboxout.PdfRendererBuilder;
 import com.hechang.insighthub.service.ReportExportService;
 
-/** Renders immutable Markdown snapshots; raw HTML is disabled by CommonMark. */
+/**
+ * 将不可变 Markdown 报告快照导出为安全 HTML/PDF。
+ *
+ * <p>CommonMark 禁用原始 HTML并清洗危险 URL；标题单独转义。PDF 只消费同一份
+ * 安全 XHTML，并显式注册随服务打包的中文字体，避免依赖宿主机字体。导出属于
+ * CPU/文件资源操作，不应放入报告持久化事务。</p>
+ */
 @Service
 public class ReportExportServiceImpl implements ReportExportService {
 
     private static final String CJK_FONT_FAMILY = "Noto Sans SC";
-    // OpenHTMLtoPDF/PDFBox accepts the Google Fonts TrueType build; the CFF
-    // OpenType variant is intentionally not used because it is not portable
-    // across the PDF renderer versions used by this service.
+    // OpenHTMLtoPDF/PDFBox 使用 TrueType 构建；CFF OpenType 在当前渲染器版本间
+    // 兼容性不稳定，因此字体必须随应用打包并在构建时验证许可文件。
     private static final String CJK_FONT_RESOURCE = "/fonts/NotoSansSC-wght.ttf";
     private final Parser parser = Parser.builder().build();
     private final HtmlRenderer renderer = HtmlRenderer.builder()
@@ -29,8 +34,8 @@ public class ReportExportServiceImpl implements ReportExportService {
     public byte[] html(String markdown, String title) {
         String safeTitle = escape(title == null || title.isBlank() ? "InsightHub Report" : title);
         String body = renderer.render(parser.parse(markdown == null ? "" : markdown));
-        // OpenHTMLtoPDF consumes XHTML, while the same document remains safe to
-        // download and open in a browser as an HTML export.
+        // OpenHTMLtoPDF 要求 XHTML；同一文档也可作为浏览器 HTML 下载，二者不能
+        // 使用不同的清洗路径，否则 PDF 与 HTML 会产生安全/内容差异。
         String document = "<?xml version=\"1.0\" encoding=\"UTF-8\"?><!DOCTYPE html>"
                 + "<html xmlns=\"http://www.w3.org/1999/xhtml\" lang=\"zh-CN\"><head><meta charset=\"UTF-8\" />"
                 + "<title>" + safeTitle + "</title><style>body{font-family:'" + CJK_FONT_FAMILY + "',sans-serif;"

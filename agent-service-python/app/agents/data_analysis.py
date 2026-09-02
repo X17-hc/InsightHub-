@@ -9,10 +9,19 @@ from app.services.analysis_sandbox import SandboxUnavailable, run_analysis
 from app.services.artifacts import save_all
 
 def _emit(event: dict[str, Any]) -> None:
+    """尽力把脱敏 Sandbox 事件写入当前 LangGraph custom stream。
+
+    事件仍会随 State 返回并持久化，因此 custom writer 不可用不应改变业务终态。
+    """
     try: get_stream_writer()(event)
     except Exception: pass
 
 def data_analysis(state: ResearchState) -> dict[str, Any]:
+    """用经过字段白名单和数量限制的 VERIFIED 证据生成分析产物。
+
+    无可结构化证据是合法的零产物成功；Docker/镜像不可用或容器失败则产生稳定
+    SANDBOX 失败事件。节点不得把脚本正文、宿主机路径或完整 stdout 写入事件。
+    """
     step, failure = claim_step(state, "data_analysis")
     if failure is not None: return failure
     events, task_id, run_id = list(state.get("events") or []), state["task_id"], state["run_id"]

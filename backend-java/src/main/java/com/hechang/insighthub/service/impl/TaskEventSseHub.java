@@ -33,6 +33,11 @@ import lombok.RequiredArgsConstructor;
 
 /**
  * SSE 连接管理：MySQL 回放 + Redis 订阅 + DB 轮询降级 + 心跳。
+ *
+ * <p>MySQL 事件表是可恢复事实来源，Redis Pub/Sub 只降低实时延迟。每个 session
+ * 用 lastSent 去重，把历史回放与实时订阅衔接为 at-least-once 可恢复流；该类不
+ * 承诺 exactly-once。所有定时任务、Redis listener 和 emitter 必须随 session
+ * 关闭而释放，避免终态任务长期占用线程。</p>
  */
 @Component
 @RequiredArgsConstructor
@@ -75,7 +80,7 @@ public class TaskEventSseHub {
         emitter.onTimeout(cleanup);
         emitter.onError(e -> cleanup.run());
 
-        // 回放历史
+        // 先登记 session 再回放，随后 Redis/DB 可能重复送达；lastSent 是二次去重边界。
         List<TaskEvent> history = listAfterEventNo(taskId, fromEventNo);
         for (TaskEvent row : history) {
             long eventNo = row.getEventNo() == null ? 0L : row.getEventNo();
@@ -88,7 +93,7 @@ public class TaskEventSseHub {
             return emitter;
         }
 
-        // Redis 订阅（失败不阻断；靠 DB 轮询兜底）
+        // Redis 只承载提示性实时消息，订阅失败不丢数据；DB 轮询仍从 lastSent 续读。
         try {
             MessageListener listener = (Message message, byte[] pattern) -> {
                 try {
@@ -120,7 +125,7 @@ public class TaskEventSseHub {
                 hb,
                 TimeUnit.SECONDS);
 
-        // Redis 宕机/漏推时：每 1s 从 MySQL 拉取 lastSent 之后的事件
+        // Redis 宕机、跨实例或漏推时，每秒从持久化事件表续读。
         session.dbPoll = sseScheduler.scheduleAtFixedRate(
                 () -> pollDbEvents(session, workspaceId),
                 1,
@@ -188,6 +193,7 @@ public class TaskEventSseHub {
     }
 
     private void dispatchLiveJson(EmitterSession session, String json) throws Exception {
+        // Pub/Sub 与 DB 回放可能同时到达，eventNo <= lastSent 的消息必须幂等忽略。
         @SuppressWarnings("unchecked")
         Map<String, Object> map = objectMapper.readValue(json, Map.class);
         Object en = map.get("eventId");
@@ -206,7 +212,8 @@ public class TaskEventSseHub {
         if (eventNo > 0) {
             session.lastSent.set(eventNo);
         }
-        // TASK_FAILED precedes the persisted TASK_RESULT and is not the canonical terminal envelope.
+        // TASK_FAILED 是过程事件；只有已持久化的 TASK_RESULT 才是规范终态，否则
+        // 过早关闭会让浏览器错过报告版本、质量投影等最终数据。
         if (isTerminalEnvelope(type, map.get("status"))) {
             completeSession(session);
         }

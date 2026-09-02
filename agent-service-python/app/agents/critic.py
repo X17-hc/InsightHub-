@@ -161,6 +161,11 @@ def critic_review(state: ResearchState) -> dict[str, Any]:
     """
     Critic 节点：产出 CritiqueResult，并递增 critic_round。
 
+    PASS 表示证据满足计划来源要求；SUPPLEMENT 表示仍有补充轮次；FAIL 表示研究
+    质量未通过但图仍可生成带限制说明的可审计报告。只有 LLM、协议、deadline 等
+    执行异常才把任务状态置为 FAILED。模型调用只允许在总 deadline 内进行有界
+    重试，非法响应必须先经 schema 和业务不变量清洗。
+
     Returns:
         critique / critic_round / events / step_count 增量。
     """
@@ -256,7 +261,10 @@ def critic_review(state: ResearchState) -> dict[str, Any]:
 
 def supplement_research(state: ResearchState) -> dict[str, Any]:
     """
-    将 Critic 的补充任务写入 pending_tasks，供后续 KB/Web 节点消费。
+    将 Critic 的补充任务写入 pending_tasks，供 DAG 执行节点消费。
+
+    每轮最多接收两个有效补充任务；未绑定知识库时过滤 knowledge_research。
+    补充轮次由 critic_round/max_critic_rounds 共同限制，不能无限循环。
 
     Returns:
         pending_tasks / events / step_count 增量。
@@ -315,7 +323,10 @@ def supplement_research(state: ResearchState) -> dict[str, Any]:
 
 def route_after_critic(state: ResearchState) -> str:
     """
-    Critic 后路由：失败终止；SUPPLEMENT 且未超轮次 → 补充；否则写报告。
+    Critic 后路由：执行失败终止；SUPPLEMENT 且未超轮次则补充；否则写报告。
+
+    返回分支固定为 ``stop``、``supplement``、``write``。质量 FAIL 会走 write，
+    这是“执行状态”和“研究质量状态”分离的关键约束。
 
     Returns:
         stop | supplement | write

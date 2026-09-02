@@ -56,6 +56,7 @@ def _classify_execution_failure(exception: Exception) -> tuple[str, str]:
 
 
 def _configuration_error() -> tuple[str, str] | None:
+    """在图启动前执行 fail-closed 配置检查，不把密钥或底层异常写入协议。"""
     settings = get_settings()
     if settings.synthetic_allowed():
         return None
@@ -70,7 +71,7 @@ def _build_init_state(
     context,
     initial_events,
 ):
-    """构造图初始状态。"""
+    """构造一次 run 的完整初始状态；身份、deadline 与 runId 后续不可改写。"""
     return {
         "task_id": request.task_id,
         "workspace_id": request.workspace_id,
@@ -229,7 +230,11 @@ def stream_research_task(
     trace_id: str | None = None,
 ) -> Iterator[str]:
     """
-    流式执行：按节点边界产出 NDJSON 行，最后一行 TASK_RESULT。
+    流式执行图，并按产生顺序输出 NDJSON 事件。
+
+    每条普通事件可被 Java 幂等落库；无论成功或失败，最后都必须输出唯一的
+    ``TASK_RESULT`` 作为协议终态。租约覆盖整个生成器生命周期，Checkpoint
+    负责恢复状态但不能代替互斥。
 
     Yields:
         NDJSON 文本行（不含换行符由调用方拼接）。
@@ -298,7 +303,7 @@ def resume_research_task(
     timeout_seconds: int = 300,
     final_state=None) -> Iterator[str]:
     """
-    从 MemorySaver Checkpoint 恢复流式执行。
+    从配置的 Checkpoint 恢复同一 taskId/runId 的流式执行。
 
     Args:
         task_id: 与创建时相同的 thread_id。
@@ -353,7 +358,7 @@ def approve_plan_research_task(
     task_id: str, *, run_id: str, approved_plan_hash: str, trace_id: str | None = None,
     timeout_seconds: int = 300,
 ) -> Iterator[str]:
-    """只允许通过匹配的计划哈希从审批中断点继续。"""
+    """只允许通过常量时间比较匹配的计划哈希从审批中断点继续。"""
     context = ExecutionContext.for_resume(task_id, run_id=run_id, trace_id=trace_id, timeout_seconds=timeout_seconds)
     graph = get_compiled_graph()
     values = checkpoint_values(graph, task_id, run_id)
@@ -382,7 +387,12 @@ def _stream_graph(
     input_state: Any,
     resume: bool,
 ) -> Iterator[str]:
-    """内部：驱动 graph.stream 并在节点边界检查控制字。"""
+    """驱动 LangGraph custom/values 双流，并在节点边界落实控制语义。
+
+    custom 事件用于低延迟输出，values 用于状态快照和遗漏事件补发；本地集合
+    只抑制本次连接内的重复 eventId，跨连接幂等仍由 Java 事件表保证。pause、
+    cancel 与 timeout 都先写回 Checkpoint 再返回规范 ``TASK_RESULT``。
+    """
     graph = get_compiled_graph()
     store = get_control_store()
     settings = get_settings()

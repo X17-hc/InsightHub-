@@ -66,7 +66,8 @@ public class JwtAuthFilter extends OncePerRequestFilter {
             if (header != null && header.startsWith("Bearer ")) {
                 token = header.substring(7).trim();
             } else if (isSseEventsPath(request)) {
-                // 仅 SSE /events 允许 ?access_token=（EventSource 不便带 Header）
+                // 历史 EventSource 兼容路径。query token 可能进入代理日志、浏览器历史和
+                // Referrer；当前 fetch-based SSE 已能携带 Authorization，应尽快移除该分支。
                 String q = request.getParameter("access_token");
                 if (q != null && !q.isBlank()) {
                     token = q.trim();
@@ -89,7 +90,8 @@ public class JwtAuthFilter extends OncePerRequestFilter {
                         securityContextRepository.saveContext(context, request, response);
                     }
                 } catch (Exception ignored) {
-                    // 无效 token：保持未认证，由后续链路返回 401
+                    // 不向客户端区分签名、过期或用户不存在，避免泄露认证细节；保持未认证，
+                    // 由统一入口返回 401。日志若补充诊断也不得记录 token 本身。
                 }
             }
         }

@@ -23,7 +23,13 @@ import com.hechang.insighthub.service.TaskResultService;
 import com.mybatisflex.core.query.QueryWrapper;
 import lombok.RequiredArgsConstructor;
 
-/** 任务最终结果持久化：报告与引用保持同一事务调用。 */
+/**
+ * 任务结果持久化边界。
+ *
+ * <p>报告版本、该版本引用、报告质量快照与任务最新质量投影必须在同一短事务中
+ * 成功或回滚。该类不执行 Agent、文件、PDF 或 SSE I/O，避免持有行锁期间等待
+ * 外部系统。</p>
+ */
 @Service
 @RequiredArgsConstructor
 public class TaskResultServiceImpl implements TaskResultService {
@@ -59,8 +65,8 @@ public class TaskResultServiceImpl implements TaskResultService {
         if (markdown != null && markdown.indexOf('\uFFFD') >= 0) {
             log.error("report markdown contains U+FFFD replacement chars taskId={} workspaceId={}", taskId, workspaceId);
         }
-        // Lock the owning task before calculating the next version. The report unique
-        // constraint remains the final guard for concurrent completion callbacks.
+        // 先锁任务行再计算版本号，使同一任务的完成回调串行化；(task_id, version)
+        // 唯一约束仍是并发与程序缺陷下的最后防线，不能仅依赖“先查后插”。
         if (researchTaskMapper.findByIdAndWorkspaceForUpdate(taskId, workspaceId) == null) {
             throw new IllegalStateException("task does not exist while saving report");
         }
@@ -125,6 +131,8 @@ public class TaskResultServiceImpl implements TaskResultService {
         String verdict = quality == null ? null : string(quality.get("verdict"));
         String status = QualityStatus.fromVerdict(verdict).name();
         String summary = quality == null ? null : truncate(string(quality.get("summary")), 1024);
+        // Java 再做一次信任边界校验：Python 的 PASS 不能让 SYNTHETIC 或来源数不足
+        // 的报告进入 READY。降级只改变质量，不把已完成的图执行伪装成系统异常。
         if ("PASS".equals(status) && (synthetic > 0 || verified < 3)) {
             status = QualityStatus.FAIL.name();
             summary = synthetic > 0

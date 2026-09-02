@@ -31,7 +31,11 @@ if not df.empty:
 
 
 class SandboxUnavailable(RuntimeError):
-    pass
+    """Docker CLI、固定镜像或运行开关不满足时抛出。
+
+    调用方应映射为稳定错误码 ``SANDBOX_UNAVAILABLE``，不得把 Docker stderr、
+    宿主机路径或镜像仓库凭据透传给 Java。
+    """
 
 
 class SandboxExecutionTimeout(RuntimeError):
@@ -55,6 +59,12 @@ def _remove_container(container_name: str) -> None:
 
 
 def _validate_script(script: str) -> None:
+    """在容器启动前执行最小 AST 白名单校验。
+
+    AST 校验是纵深防御而非 Python 沙箱；真正的隔离仍依赖固定镜像、无网络、
+    非 root、只读根文件系统、capability drop 与受限挂载。当前脚本是服务端固定
+    模板，模型不能修改 Docker 参数或挂载路径。
+    """
     tree = ast.parse(script, mode="exec")
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
@@ -72,6 +82,7 @@ def _validate_script(script: str) -> None:
 
 
 def ensure_available() -> None:
+    """快速检查 Sandbox 开关、Docker CLI 和固定镜像是否可用。"""
     settings = get_settings()
     if not settings.sandbox_enabled or shutil.which("docker") is None:
         raise SandboxUnavailable("SANDBOX_UNAVAILABLE: Docker CLI is unavailable")
@@ -81,6 +92,12 @@ def ensure_available() -> None:
 
 
 def run_analysis(*, task_id: str, workspace_id: str, run_id: str, evidence: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """在一次性受限容器中聚合已筛选证据并返回产物元数据。
+
+    输入只读、输出仅限当前任务 job 目录；容器不能联网且使用数值非 root UID。
+    超时后先强制移除具名容器，再抛出稳定超时异常。返回的 ``storageUri`` 仅供
+    Agent 内部持久化，内部 API DTO 和浏览器响应必须移除该字段。
+    """
     settings = get_settings()
     ensure_available()
     _validate_script(_SCRIPT)
@@ -132,6 +149,11 @@ def run_analysis(*, task_id: str, workspace_id: str, run_id: str, evidence: list
 
 
 def resolve_artifact(storage_uri: str) -> Path:
+    """把内部逻辑 URI 解析为受控文件，并阻止路径穿越和非白名单类型。
+
+    返回路径只供 Agent 文件接口使用，绝不能序列化给 Java 或浏览器；调用方仍
+    需检查符号链接、实际文件大小和 MIME 元数据的一致性。
+    """
     root = Path(get_settings().artifact_root_dir).resolve()
     if not storage_uri.startswith("artifact://"):
         raise FileNotFoundError("invalid artifact URI")
