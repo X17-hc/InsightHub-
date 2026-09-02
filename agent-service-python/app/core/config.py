@@ -4,6 +4,7 @@ from functools import lru_cache
 import os
 from pathlib import Path
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # InsightHub 仓库根目录（agent-service-python 的上一级）
@@ -24,25 +25,25 @@ class Settings(BaseSettings):
     deepseek_api_key: str = ""
     tavily_api_key: str = ""
     python_agent_port: int = 8000
-    default_max_steps: int = 20
+    default_max_steps: int = Field(default=20, ge=1, le=100)
     # 为 true 时跳过真实 LLM，使用确定性假数据（单测 / 无 Key 冒烟）
     agent_mock_llm: bool = False
     # 仅供本地显式演示；production 永远禁止合成研究数据。
     allow_synthetic_demo: bool = False
     # MOCK 模式下节点边界停顿（毫秒），便于 pause/cancel 联调；单测设 0
     agent_mock_step_delay_ms: int = 800
-    # Redis：任务控制字；不可用时降级进程内内存
+    # Redis：生产任务控制与幂等事实来源；不可用时 fail closed，禁止进程内降级。
     redis_url: str = "redis://127.0.0.1:6379/0"
     # 真实检索、两轮 Critic、Sandbox 与报告写作共享同一执行预算。
-    default_timeout_seconds: int = 900
+    default_timeout_seconds: int = Field(default=900, ge=60, le=7200)
     # 内部 API 共享密钥；为空时内部接口拒绝服务
     agent_internal_token: str = ""
     # 单任务执行租约等待时间，防止暂停确认与恢复请求的窄竞态
-    execution_lease_wait_seconds: int = 5
+    execution_lease_wait_seconds: int = Field(default=5, ge=0, le=60)
 
     # LangGraph Checkpoint：生产默认持久化到 PostgreSQL；测试可显式设为 memory
     checkpoint_backend: str = "postgres"
-    checkpoint_pool_max_size: int = 10
+    checkpoint_pool_max_size: int = Field(default=10, ge=1, le=100)
 
     # PostgreSQL / PGVector（知识库片段）
     postgres_host: str = "127.0.0.1"
@@ -55,7 +56,7 @@ class Settings(BaseSettings):
 
     # Python 只允许读取该目录内由 Java 上传的文件；相对路径按仓库根目录解析
     upload_root_dir: str = "backend-java/data/uploads"
-    knowledge_upload_max_bytes: int = 5 * 1024 * 1024
+    knowledge_upload_max_bytes: int = Field(default=5 * 1024 * 1024, ge=1024, le=100 * 1024 * 1024)
 
     # 数据分析 Sandbox：所有路径均由服务端固定，模型不能覆盖这些配置。
     sandbox_enabled: bool = True
@@ -63,13 +64,13 @@ class Settings(BaseSettings):
     # pandas/pyarrow/matplotlib 的首次导入和字体缓存初始化在受限 CPU 的
     # Sandbox 中可能超过 45 秒。该上限只约束单次容器分析，仍显著小于
     # default_timeout_seconds 的整项研究预算。
-    sandbox_timeout_seconds: int = 120
+    sandbox_timeout_seconds: int = Field(default=120, ge=5, le=1800)
     sandbox_memory_limit: str = "512m"
-    sandbox_cpu_limit: float = 1.0
-    sandbox_pids_limit: int = 64
+    sandbox_cpu_limit: float = Field(default=1.0, gt=0, le=8)
+    sandbox_pids_limit: int = Field(default=64, ge=16, le=512)
     artifact_root_dir: str = "/opt/insighthub/artifacts"
-    artifact_max_count: int = 8
-    artifact_max_total_bytes: int = 20 * 1024 * 1024
+    artifact_max_count: int = Field(default=8, ge=1, le=64)
+    artifact_max_total_bytes: int = Field(default=20 * 1024 * 1024, ge=1024, le=500 * 1024 * 1024)
 
     # Embedding：维度固定 1536；mock 时用确定性伪向量
     embedding_mock: bool = False
@@ -79,8 +80,8 @@ class Settings(BaseSettings):
     embedding_dim: int = 1536
 
     # 分块默认参数
-    chunk_size: int = 500
-    chunk_overlap: int = 80
+    chunk_size: int = Field(default=500, ge=100, le=4000)
+    chunk_overlap: int = Field(default=80, ge=0, le=1000)
 
     def is_production(self) -> bool:
         return self.app_env.strip().lower() == "production"

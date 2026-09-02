@@ -13,9 +13,11 @@ public interface DocumentMapper extends BaseMapper<KbDocument> {
                 .eq(KbDocument::getWorkspaceId, workspaceId));
     }
 
-    default KbDocument findByKnowledgeBaseAndContentHash(String knowledgeBaseId, String contentHash) {
+    default KbDocument findByKnowledgeBaseAndContentHash(
+            String knowledgeBaseId, String workspaceId, String contentHash) {
         return selectOneByQuery(QueryWrapper.create()
                 .eq(KbDocument::getKnowledgeBaseId, knowledgeBaseId)
+                .eq(KbDocument::getWorkspaceId, workspaceId)
                 .eq(KbDocument::getContentHash, contentHash));
     }
 

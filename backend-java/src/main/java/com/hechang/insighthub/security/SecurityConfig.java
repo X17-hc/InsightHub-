@@ -18,6 +18,8 @@ import org.springframework.security.web.context.SecurityContextRepository;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.hechang.insighthub.config.DocsProperties;
+import com.hechang.insighthub.common.ResultUtils;
+import com.hechang.insighthub.exception.ErrorCode;
 
 import lombok.RequiredArgsConstructor;
 
@@ -77,19 +79,15 @@ public class SecurityConfig {
                             response.setStatus(401);
                             response.setCharacterEncoding(StandardCharsets.UTF_8.name());
                             response.setContentType(MediaType.APPLICATION_JSON_VALUE);
-                            objectMapper.writeValue(response.getWriter(), java.util.Map.of(
-                                    "code", "UNAUTHORIZED",
-                                    "message", "login required",
-                                    "details", java.util.Map.of()));
+                            objectMapper.writeValue(response.getWriter(),
+                                    ResultUtils.error(ErrorCode.NOT_LOGIN_ERROR, "login required"));
                         })
                         .accessDeniedHandler((request, response, accessDeniedException) -> {
                             response.setStatus(403);
                             response.setCharacterEncoding(StandardCharsets.UTF_8.name());
                             response.setContentType(MediaType.APPLICATION_JSON_VALUE);
-                            objectMapper.writeValue(response.getWriter(), java.util.Map.of(
-                                    "code", "FORBIDDEN",
-                                    "message", "forbidden",
-                                    "details", java.util.Map.of()));
+                            objectMapper.writeValue(response.getWriter(),
+                                    ResultUtils.error(ErrorCode.FORBIDDEN_ERROR, "forbidden"));
                         }))
                 .httpBasic(basic -> basic.disable())
                 .formLogin(form -> form.disable())

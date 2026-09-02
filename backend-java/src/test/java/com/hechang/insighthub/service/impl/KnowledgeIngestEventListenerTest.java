@@ -1,5 +1,9 @@
 package com.hechang.insighthub.service.impl;
 
+import com.hechang.insighthub.service.event.DocumentIngestRequested;
+import com.hechang.insighthub.service.event.KnowledgeChunksDeleteRequested;
+import com.hechang.insighthub.service.event.KnowledgeIngestEventListener;
+import com.hechang.insighthub.service.execution.KnowledgeChunkCleanupExecutor;
 import static org.mockito.Mockito.verify;
 
 import org.junit.jupiter.api.Test;

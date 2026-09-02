@@ -1,5 +1,6 @@
-package com.hechang.insighthub.service.impl;
+package com.hechang.insighthub.service.event;
 
+import com.hechang.insighthub.service.execution.KnowledgeChunkCleanupExecutor;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.event.TransactionPhase;
 import org.springframework.transaction.event.TransactionalEventListener;

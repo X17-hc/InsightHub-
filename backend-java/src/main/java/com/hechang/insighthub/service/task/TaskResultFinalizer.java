@@ -1,4 +1,4 @@
-package com.hechang.insighthub.service.impl;
+package com.hechang.insighthub.service.task;
 
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -65,6 +65,12 @@ public class TaskResultFinalizer {
         if (task == null || TaskStatus.isTerminal(task.getStatus())) {
             return false;
         }
+        if (!isCurrentRun(task, runId)) {
+            // 重试会替换 currentRunId；迟到的旧流终态必须整条忽略，不能保存报告或推进状态。
+            log.info("ignore terminal result from stale run taskId={} currentRunId={} eventRunId={}",
+                    taskId, task.getCurrentRunId(), runId);
+            return false;
+        }
         TaskStatus current = TaskStatus.valueOf(task.getStatus());
         if (TaskStatus.PAUSED.matches(status)) {
             if (current == TaskStatus.RUNNING || current == TaskStatus.PAUSING) {
@@ -120,6 +126,11 @@ public class TaskResultFinalizer {
         if (task == null || TaskStatus.isTerminal(task.getStatus())) {
             return;
         }
+        if (!isCurrentRun(task, runId)) {
+            log.info("ignore forced terminal state from stale run taskId={} currentRunId={} eventRunId={}",
+                    taskId, task.getCurrentRunId(), runId);
+            return;
+        }
         TaskStatus current = TaskStatus.tryParse(task.getStatus());
         if (current == null) {
             log.error("force terminal status from invalid state taskId={} current={} target={}",
@@ -136,6 +147,10 @@ public class TaskResultFinalizer {
     private static String text(JsonNode node, String field) {
         JsonNode value = node.get(field);
         return value == null || value.isNull() ? null : value.asText();
+    }
+
+    private static boolean isCurrentRun(ResearchTask task, String runId) {
+        return runId != null && !runId.isBlank() && runId.equals(task.getCurrentRunId());
     }
 
     private static String truncate(String value, int max) {

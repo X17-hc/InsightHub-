@@ -26,6 +26,18 @@ public class TaskProperties {
     @Positive
     private int sseHeartbeatSeconds = 15;
 
+    /** 单个任务允许的同时在线 SSE 连接数。 */
+    @Positive
+    private int sseMaxConnectionsPerTask = 10;
+
+    /** 单实例允许的 SSE 连接总数。 */
+    @Positive
+    private int sseMaxConnectionsTotal = 200;
+
+    /** 单条 SSE 连接最长存活时间（秒）；客户端会携带 Last-Event-ID 自动重连。 */
+    @Positive
+    private int sseConnectionTimeoutSeconds = 1800;
+
     /** 可靠派发命令允许的最大尝试次数。 */
     @Positive
     private int dispatchMaxAttempts = 5;

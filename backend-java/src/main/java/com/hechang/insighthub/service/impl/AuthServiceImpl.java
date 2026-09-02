@@ -27,7 +27,6 @@ import com.hechang.insighthub.model.entity.SysUser;
 import com.hechang.insighthub.security.JwtService;
 import com.hechang.insighthub.security.SecurityUtils;
 import com.hechang.insighthub.service.AuthService;
-import com.mybatisflex.core.query.QueryWrapper;
 import com.mybatisflex.spring.service.impl.ServiceImpl;
 import com.mybatisflex.core.update.UpdateChain;
 import lombok.RequiredArgsConstructor;
@@ -105,12 +104,11 @@ public class AuthServiceImpl extends ServiceImpl<SysUserMapper, SysUser> impleme
         if (revoked || expired) {
             throw BusinessException.unauthorized("refresh token expired or revoked");
         }
-        UpdateChain.of(refreshTokenMapper)
-                .set(SysRefreshToken::getRevoked, 1)
-                .eq(SysRefreshToken::getId, row.getId())
-                .update();
+        if (refreshTokenMapper.revokeIfActive(row.getId()) != 1) {
+            throw BusinessException.unauthorized("refresh token expired or revoked");
+        }
         SysUser user = getById(row.getUserId());
-        if (user == null) {
+        if (user == null || user.getStatus() == null || user.getStatus() != 1) {
             throw BusinessException.unauthorized("user not found");
         }
         return issueTokens(user.getId(), user.getUsername());

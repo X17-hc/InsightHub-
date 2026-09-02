@@ -3,6 +3,7 @@ package com.hechang.insighthub.service.impl;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
@@ -17,6 +18,7 @@ import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.multipart.MultipartFile;
 
 import com.hechang.insighthub.config.UploadProperties;
@@ -31,6 +33,8 @@ import com.hechang.insighthub.model.entity.KbDocument;
 import com.hechang.insighthub.model.entity.KnowledgeBase;
 import com.hechang.insighthub.service.KnowledgeService;
 import com.hechang.insighthub.service.WorkspaceAccessService;
+import com.hechang.insighthub.service.event.DocumentIngestRequested;
+import com.hechang.insighthub.service.event.KnowledgeChunksDeleteRequested;
 import com.mybatisflex.core.query.QueryWrapper;
 import com.mybatisflex.spring.service.impl.ServiceImpl;
 import com.mybatisflex.core.update.UpdateChain;
@@ -60,6 +64,7 @@ public class KnowledgeServiceImpl extends ServiceImpl<KnowledgeBaseMapper, Knowl
     private final UploadProperties uploadProperties;
     private final KnowledgeIngestClient ingestClient;
     private final ApplicationEventPublisher eventPublisher;
+    private final TransactionTemplate transactionTemplate;
 
     @Override
     @Transactional
@@ -108,7 +113,6 @@ public class KnowledgeServiceImpl extends ServiceImpl<KnowledgeBaseMapper, Knowl
     }
 
     @Override
-    @Transactional
     public DocumentResponse uploadDocument(String workspaceId, String kbId, MultipartFile file) {
         String userId = accessService.requireCurrentMember(workspaceId).userId();
         KnowledgeBase kb = requireKb(workspaceId, kbId);
@@ -146,7 +150,7 @@ public class KnowledgeServiceImpl extends ServiceImpl<KnowledgeBaseMapper, Knowl
         }
         String contentHash = sha256Hex(bytes);
 
-        KbDocument dup = documentMapper.findByKnowledgeBaseAndContentHash(kbId, contentHash);
+        KbDocument dup = documentMapper.findByKnowledgeBaseAndContentHash(kbId, workspaceId, contentHash);
         if (dup != null) {
             throw BusinessException.conflict(
                     "DUPLICATE_DOCUMENT",
@@ -154,17 +158,10 @@ public class KnowledgeServiceImpl extends ServiceImpl<KnowledgeBaseMapper, Knowl
         }
 
         String docId = "doc-" + UUID.randomUUID().toString().replace("-", "").substring(0, 12);
-        Path dest = Path.of(
-                        uploadProperties.getRootDir(),
-                        workspaceId,
-                        kbId,
-                        docId,
-                        originalName)
-                .toAbsolutePath()
-                .normalize();
+        Path dest = resolveUploadDestination(workspaceId, kbId, docId, originalName);
         try {
             Files.createDirectories(dest.getParent());
-            Files.write(dest, bytes);
+            Files.write(dest, bytes, StandardOpenOption.CREATE_NEW);
         } catch (IOException ex) {
             throw new BusinessException(
                     com.hechang.insighthub.exception.ErrorCode.SYSTEM_ERROR,
@@ -172,26 +169,37 @@ public class KnowledgeServiceImpl extends ServiceImpl<KnowledgeBaseMapper, Knowl
         }
 
         String contentType = resolveContentType(file.getContentType(), ext);
-        KbDocument doc = new KbDocument();
-        doc.setId(docId);
-        doc.setKnowledgeBaseId(kbId);
-        doc.setWorkspaceId(workspaceId);
-        doc.setFileName(originalName);
-        doc.setContentType(contentType);
-        doc.setFileSize((long) bytes.length);
-        doc.setContentHash(contentHash);
-        doc.setSourceUri(dest.toString());
-        doc.setParseStatus(PARSE_PENDING);
-        doc.setChunkCount(0);
-        doc.setUploadedBy(userId);
-        documentMapper.insert(doc);
+        try {
+            return transactionTemplate.execute(status -> {
+                KnowledgeBase locked = mapper.findByIdAndWorkspaceForUpdate(kbId, workspaceId);
+                if (locked == null) {
+                    throw BusinessException.notFound("knowledge base not found");
+                }
+                if (!STATUS_ACTIVE.equals(locked.getStatus())) {
+                    throw BusinessException.conflict("KB_DISABLED", "knowledge base is disabled");
+                }
+                KbDocument concurrentDuplicate = documentMapper.findByKnowledgeBaseAndContentHash(
+                        kbId, workspaceId, contentHash);
+                if (concurrentDuplicate != null) {
+                    throw BusinessException.conflict(
+                            "DUPLICATE_DOCUMENT",
+                            "same content already uploaded as " + concurrentDuplicate.getId());
+                }
 
-        int count = Math.toIntExact(documentMapper.countByKnowledgeBaseAndWorkspace(kbId, workspaceId));
-        updateKnowledgeBaseDocCount(kbId, workspaceId, count);
-
-        // 必须在事务提交后再异步入库，否则线程读不到未提交行
-        scheduleIngestAfterCommit(workspaceId, kbId, docId);
-        return toDocResponse(requireDoc(workspaceId, kbId, docId));
+                documentMapper.insert(newDocument(
+                        docId, kbId, workspaceId, originalName, contentType, bytes.length,
+                        contentHash, dest, userId));
+                int count = Math.toIntExact(
+                        documentMapper.countByKnowledgeBaseAndWorkspace(kbId, workspaceId));
+                updateKnowledgeBaseDocCount(kbId, workspaceId, count);
+                // 事件与元数据同事务发布；监听器只在提交后异步调用 Python。
+                scheduleIngestAfterCommit(workspaceId, kbId, docId);
+                return toDocResponse(requireDoc(workspaceId, kbId, docId));
+            });
+        } catch (RuntimeException ex) {
+            deleteUncommittedUpload(dest);
+            throw ex;
+        }
     }
 
     @Override
@@ -226,6 +234,50 @@ public class KnowledgeServiceImpl extends ServiceImpl<KnowledgeBaseMapper, Knowl
     /** 发布事件；监听器会在事务提交后触发异步入库，避免读到未提交文档。 */
     private void scheduleIngestAfterCommit(String workspaceId, String kbId, String docId) {
         eventPublisher.publishEvent(new DocumentIngestRequested(workspaceId, kbId, docId));
+    }
+
+    private Path resolveUploadDestination(
+            String workspaceId, String kbId, String docId, String originalName) {
+        Path root = Path.of(uploadProperties.getRootDir()).toAbsolutePath().normalize();
+        Path destination = root.resolve(workspaceId).resolve(kbId).resolve(docId).resolve(originalName).normalize();
+        if (!destination.startsWith(root)) {
+            throw BusinessException.badRequest("INVALID_UPLOAD_PATH", "upload path is invalid");
+        }
+        return destination;
+    }
+
+    private static KbDocument newDocument(
+            String docId,
+            String kbId,
+            String workspaceId,
+            String originalName,
+            String contentType,
+            int byteLength,
+            String contentHash,
+            Path destination,
+            String userId) {
+        KbDocument doc = new KbDocument();
+        doc.setId(docId);
+        doc.setKnowledgeBaseId(kbId);
+        doc.setWorkspaceId(workspaceId);
+        doc.setFileName(originalName);
+        doc.setContentType(contentType);
+        doc.setFileSize((long) byteLength);
+        doc.setContentHash(contentHash);
+        doc.setSourceUri(destination.toString());
+        doc.setParseStatus(PARSE_PENDING);
+        doc.setChunkCount(0);
+        doc.setUploadedBy(userId);
+        return doc;
+    }
+
+    private void deleteUncommittedUpload(Path destination) {
+        try {
+            Files.deleteIfExists(destination);
+        } catch (IOException cleanupFailure) {
+            log.warn("Unable to remove uncommitted upload fileName={} errorType={}",
+                    destination.getFileName(), cleanupFailure.getClass().getSimpleName());
+        }
     }
 
     @Override

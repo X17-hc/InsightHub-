@@ -1,5 +1,7 @@
-package com.hechang.insighthub.service.impl;
+package com.hechang.insighthub.service.execution;
 
+import com.hechang.insighthub.service.task.TaskResultFinalizer;
+import com.hechang.insighthub.service.task.TaskStateMachine;
 import org.springframework.stereotype.Component;
 
 import com.hechang.insighthub.mapper.ResearchTaskMapper;

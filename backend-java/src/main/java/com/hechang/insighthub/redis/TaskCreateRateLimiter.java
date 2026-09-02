@@ -3,7 +3,6 @@ package com.hechang.insighthub.redis;
 import java.time.Duration;
 
 import org.redisson.api.RRateLimiter;
-import org.redisson.api.RateIntervalUnit;
 import org.redisson.api.RateType;
 import org.redisson.api.RedissonClient;
 import org.slf4j.Logger;
@@ -34,7 +33,7 @@ public class TaskCreateRateLimiter {
         try {
             int rate = Math.max(1, taskProperties.getCreateRatePerMinute());
             RRateLimiter limiter = redissonClient.getRateLimiter("ih:rl:user:" + userId + ":create-task");
-            limiter.trySetRate(RateType.OVERALL, rate, 1, RateIntervalUnit.MINUTES);
+            limiter.trySetRate(RateType.OVERALL, rate, Duration.ofMinutes(1));
             // 防止限流器永久占用内存：空闲后过期（尽力）
             limiter.expire(Duration.ofHours(2));
             if (!limiter.tryAcquire(1)) {

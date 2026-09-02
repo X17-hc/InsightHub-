@@ -1,5 +1,6 @@
-package com.hechang.insighthub.service.impl;
+package com.hechang.insighthub.service.realtime;
 
+import com.hechang.insighthub.service.task.TaskEventService;
 import java.io.IOException;
 import java.util.List;
 import java.util.Map;
@@ -52,6 +53,7 @@ public class TaskEventSseHub {
     private final TaskEventService taskEventService;
     private final TaskProperties taskProperties;
     private final ScheduledExecutorService sseScheduler;
+    private final AtomicLong activeSessionCount = new AtomicLong();
 
     /** taskId -> emitters */
     private final ConcurrentHashMap<String, CopyOnWriteArrayList<EmitterSession>> sessions = new ConcurrentHashMap<>();
@@ -69,11 +71,28 @@ public class TaskEventSseHub {
             throw BusinessException.notFound("task not found");
         }
 
-        SseEmitter emitter = new SseEmitter(0L); // 无超时，靠心跳
+        long active = activeSessionCount.incrementAndGet();
+        if (active > taskProperties.getSseMaxConnectionsTotal()) {
+            activeSessionCount.decrementAndGet();
+            throw BusinessException.tooManyRequests("SSE_CONNECTION_LIMIT", "too many active event streams");
+        }
+
+        SseEmitter emitter = new SseEmitter(taskProperties.getSseConnectionTimeoutSeconds() * 1000L);
         AtomicLong lastSent = new AtomicLong(fromEventNo);
         EmitterSession session = new EmitterSession(taskId, emitter, lastSent);
-
-        sessions.computeIfAbsent(taskId, k -> new CopyOnWriteArrayList<>()).add(session);
+        CopyOnWriteArrayList<EmitterSession> taskSessions =
+                sessions.computeIfAbsent(taskId, ignored -> new CopyOnWriteArrayList<>());
+        synchronized (taskSessions) {
+            if (taskSessions.size() >= taskProperties.getSseMaxConnectionsPerTask()) {
+                activeSessionCount.decrementAndGet();
+                if (taskSessions.isEmpty()) {
+                    sessions.remove(taskId, taskSessions);
+                }
+                throw BusinessException.tooManyRequests(
+                        "SSE_TASK_CONNECTION_LIMIT", "too many event streams for this task");
+            }
+            taskSessions.add(session);
+        }
 
         Runnable cleanup = () -> removeSession(taskId, session);
         emitter.onCompletion(cleanup);
@@ -219,7 +238,7 @@ public class TaskEventSseHub {
         }
     }
 
-    static boolean isTerminalEnvelope(String type, Object status) {
+    public static boolean isTerminalEnvelope(String type, Object status) {
         return "TASK_RESULT".equals(type)
                 && status != null
                 && isTerminal(String.valueOf(status));
@@ -233,6 +252,7 @@ public class TaskEventSseHub {
         if (!session.closed.compareAndSet(false, true)) {
             return false;
         }
+        activeSessionCount.decrementAndGet();
         CopyOnWriteArrayList<EmitterSession> list = sessions.get(taskId);
         if (list != null) {
             list.remove(session);

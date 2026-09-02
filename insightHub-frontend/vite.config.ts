@@ -26,5 +26,22 @@ export default defineConfig({
   build: {
     target: 'esnext',
     minify: 'terser',
+    // Ant Design Vue 是独立、可长期缓存的 vendor chunk；阈值用于关注业务包异常增长。
+    chunkSizeWarningLimit: 750,
+    rollupOptions: {
+      output: {
+        // 将体积较大的 UI/框架依赖拆成稳定缓存块，避免所有页面共享一个近 1 MB 入口包。
+        manualChunks(id) {
+          if (!id.includes('node_modules')) return undefined
+          if (id.includes('ant-design-vue') || id.includes('@ant-design')) return 'vendor-antd'
+          if (id.includes('performative-ui') || id.includes('react-dom') || id.includes('/react/')) {
+            return 'vendor-react'
+          }
+          if (id.includes('markdown-it') || id.includes('highlight.js')) return 'vendor-markdown'
+          if (id.includes('/vue/') || id.includes('vue-router') || id.includes('pinia')) return 'vendor-vue'
+          return 'vendor-common'
+        },
+      },
+    },
   },
 })

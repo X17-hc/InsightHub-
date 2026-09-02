@@ -17,8 +17,8 @@ import io.jsonwebtoken.security.Keys;
  * Access Token 签发与解析。
  *
  * <p>密钥必须由部署环境提供且至少 32 字节；配置文件中的可预测默认值会绕过
- * 长度检查，因此生产配置不得提供共享默认密钥。当前实现校验签名和过期时间，
- * 若系统扩展到多发行方/多受众，还必须增加 issuer、audience 与 token type。</p>
+ * 长度检查，因此生产配置不得提供共享默认密钥。解析时同时校验签名、过期时间、
+ * issuer、audience 与 token type，避免其他用途或其他系统签发的令牌被误用。</p>
  */
 @Service
 public class JwtService {
@@ -54,7 +54,10 @@ public class JwtService {
         long exp = now + jwtProperties.getAccessExpireMinutes() * 60_000L;
         return Jwts.builder()
                 .subject(userId)
+                .issuer(jwtProperties.getIssuer())
+                .audience().add(jwtProperties.getAudience()).and()
                 .claim("username", username)
+                .claim("token_type", "access")
                 .issuedAt(new Date(now))
                 .expiration(new Date(exp))
                 .signWith(key)
@@ -70,6 +73,9 @@ public class JwtService {
     public Claims parseClaims(String token) {
         return Jwts.parser()
                 .verifyWith(key)
+                .requireIssuer(jwtProperties.getIssuer())
+                .requireAudience(jwtProperties.getAudience())
+                .require("token_type", "access")
                 .build()
                 .parseSignedClaims(token)
                 .getPayload();

@@ -1,5 +1,6 @@
 package com.hechang.insighthub.service.impl;
 
+import com.hechang.insighthub.service.task.TaskStateMachine;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 

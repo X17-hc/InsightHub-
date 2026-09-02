@@ -1,10 +1,13 @@
 package com.hechang.insighthub.service.impl;
 
+import com.hechang.insighthub.service.realtime.TaskEventSseHub;
+import com.hechang.insighthub.service.task.TaskStateMachine;
+import com.hechang.insighthub.service.task.TaskEventService;
+import com.hechang.insighthub.service.task.TaskLifecycleCoordinator;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.RejectedExecutionException;
 
@@ -80,13 +83,13 @@ public class ResearchTaskServiceImpl extends ServiceImpl<ResearchTaskMapper, Res
     private final TaskSlotTracker slotTracker;
     private final TaskCreateRateLimiter rateLimiter;
     private final TaskEventSseHub sseHub;
-    private final TaskStreamLease streamLease;
     private final TaskProperties taskProperties;
     private final ObjectMapper objectMapper;
     private final TaskResultService taskResultService;
-    private final TaskEventService taskEventService;
     private final ResearchTaskQueryService taskQueryService;
     private final PlanApplicationService planApplicationService;
+    private final TaskEventService taskEventService;
+    private final TaskLifecycleCoordinator lifecycleCoordinator;
 
     @Override
     public CreateTaskAcceptedResponse createAsync(String workspaceId, CreateResearchTaskRequest request) {
@@ -286,156 +289,22 @@ public class ResearchTaskServiceImpl extends ServiceImpl<ResearchTaskMapper, Res
 
     @Override
     public TaskControlResponse pause(String workspaceId, String taskId) {
-        requireControllableTask(workspaceId, taskId, accessService.requireCurrentMember(workspaceId));
-        int ttl = taskProperties.getDefaultTimeoutSeconds() + 600;
-        agentControlClient.setControl(taskId, TaskControlRedis.CONTROL_PAUSED, ttl);
-        try {
-            transactionTemplate.executeWithoutResult(tx -> {
-                ResearchTask locked = requireTaskForUpdate(workspaceId, taskId);
-                stateMachine.transition(TaskStatus.valueOf(locked.getStatus()), TaskStatus.PAUSING);
-                moveStatusIfCurrent(
-                        taskId, workspaceId, TaskStatus.RUNNING, TaskStatus.PAUSING, null, null, "pausing");
-            });
-            taskControlRedis.setControl(taskId, TaskControlRedis.CONTROL_PAUSED, ttl);
-        } catch (RuntimeException ex) {
-            trySetAgentControl(taskId, TaskControlRedis.CONTROL_RUNNING, ttl);
-            throw ex;
-        }
-        return new TaskControlResponse(taskId, TaskStatus.PAUSING.name());
+        return lifecycleCoordinator.pause(workspaceId, taskId);
     }
 
     @Override
     public TaskControlResponse resume(String workspaceId, String taskId) {
-        ResearchTask row = requireControllableTask(
-                workspaceId, taskId, accessService.requireCurrentMember(workspaceId));
-        stateMachine.transition(TaskStatus.valueOf(row.getStatus()), TaskStatus.RUNNING);
-        int ttl = taskProperties.getDefaultTimeoutSeconds() + 600;
-        String permitId = concurrencyService.tryAcquire(workspaceId, ttl);
-        try {
-            // PAUSED 时旧执行已释放并发许可；恢复必须登记新许可，否则终态无法释放。
-            slotTracker.markHeld(taskId, workspaceId, permitId, ttl);
-            transactionTemplate.executeWithoutResult(tx -> {
-                ResearchTask locked = requireTaskForUpdate(workspaceId, taskId);
-                TaskStatus fromStatus = TaskStatus.valueOf(locked.getStatus());
-                if (fromStatus != TaskStatus.PAUSED) {
-                    throw BusinessException.conflict("TASK_NOT_PAUSED", "only a paused task can be resumed");
-                }
-                stateMachine.transition(fromStatus, TaskStatus.RUNNING);
-                moveStatusIfCurrent(
-                        taskId, workspaceId, TaskStatus.PAUSED, TaskStatus.RUNNING, null, null, "resuming");
-            });
-        } catch (RuntimeException ex) {
-            releaseTaskSlot(taskId, workspaceId);
-            throw ex;
-        }
-        streamLease.invalidate(taskId);
-        try {
-            // 远端控制写入与 worker 提交必须作为一个可补偿阶段处理；任一步失败都恢复 PAUSED。
-            agentControlClient.setControl(taskId, TaskControlRedis.CONTROL_RUNNING, ttl);
-            taskControlRedis.setControl(taskId, TaskControlRedis.CONTROL_RUNNING, ttl);
-            taskExecutionService.executeStream(
-                    taskId, workspaceId, row.getCreatorId(), row.getQuery(), row.getTraceId(), true,
-                    row.getCurrentRunId(), 1);
-        } catch (RejectedExecutionException ex) {
-            restorePausedAfterResumeFailure(taskId, workspaceId, ttl);
-            throw new BusinessException(ErrorCode.OPERATION_ERROR, "EXECUTOR_REJECTED: task executor busy");
-        } catch (RuntimeException ex) {
-            restorePausedAfterResumeFailure(taskId, workspaceId, ttl);
-            throw ex;
-        }
-        return new TaskControlResponse(taskId, TaskStatus.RUNNING.name());
+        return lifecycleCoordinator.resume(workspaceId, taskId);
     }
 
     @Override
     public TaskControlResponse cancel(String workspaceId, String taskId) {
-        requireControllableTask(workspaceId, taskId, accessService.requireCurrentMember(workspaceId));
-        int ttl = taskProperties.getDefaultTimeoutSeconds() + 600;
-        agentControlClient.setControl(taskId, TaskControlRedis.CONTROL_CANCELLED, ttl);
-        TaskEventService.StoredEvent cancelled;
-        try {
-            cancelled = transactionTemplate.execute(tx -> {
-                ResearchTask row = requireTaskForUpdate(workspaceId, taskId);
-                TaskStatus from = TaskStatus.valueOf(row.getStatus());
-                stateMachine.transition(from, TaskStatus.CANCELLED);
-                mapper.updateTaskFinished(
-                        taskId, workspaceId, TaskStatus.CANCELLED.name(), row.getCurrentRunId(),
-                        "CANCELLED", truncate("cancelled by user", 1024));
-                return taskEventService.insertTerminalResult(
-                        taskId,
-                        row.getCurrentRunId(),
-                        TaskStatus.CANCELLED.name(),
-                        Map.of("code", "CANCELLED", "message", "cancelled by user"));
-            });
-        } catch (RuntimeException ex) {
-            // 数据库未接受取消时撤销远端控制，避免 Agent 已停而 Java 仍显示运行中。
-            trySetAgentControl(taskId, TaskControlRedis.CONTROL_RUNNING, ttl);
-            throw ex;
-        }
-        streamLease.invalidate(taskId);
-        taskControlRedis.setControl(
-                taskId, TaskControlRedis.CONTROL_CANCELLED, ttl);
-        publishStoredEvent(taskId, cancelled);
-        releaseTaskSlot(taskId, workspaceId);
-        sseHub.completeTask(taskId);
-        return new TaskControlResponse(taskId, TaskStatus.CANCELLED.name());
+        return lifecycleCoordinator.cancel(workspaceId, taskId);
     }
 
     @Override
     public CreateTaskAcceptedResponse retry(String workspaceId, String taskId) {
-        CurrentWorkspaceAccess actor = accessService.requireCurrentMember(workspaceId);
-        ResearchTask row = requireControllableTask(workspaceId, taskId, actor);
-        rateLimiter.acquire(actor.userId());
-        int ttl = taskProperties.getDefaultTimeoutSeconds() + 600;
-        String permitId = concurrencyService.tryAcquire(workspaceId, ttl);
-        String runId = "run-" + UUID.randomUUID().toString().replace("-", "").substring(0, 12);
-        Integer nextPlanRevision;
-        try {
-            slotTracker.markHeld(taskId, workspaceId, permitId, ttl);
-            nextPlanRevision = transactionTemplate.execute(tx -> {
-                ResearchTask locked = requireTaskForUpdate(workspaceId, taskId);
-                TaskStatus fromStatus = TaskStatus.valueOf(locked.getStatus());
-                boolean qualityRetry = fromStatus == TaskStatus.COMPLETED
-                        && ("FAIL".equals(locked.getQualityStatus())
-                        || "LEGACY_SYNTHETIC".equals(locked.getQualityStatus()));
-                if (fromStatus != TaskStatus.FAILED && !qualityRetry) {
-                    throw BusinessException.conflict(
-                            "TASK_NOT_RETRYABLE", "task has no failed quality result to retry");
-                }
-                int revision = nextPlanRevisionNo(taskId);
-                stateMachine.transition(fromStatus, TaskStatus.RUNNING);
-                mapper.prepareRetry(taskId, workspaceId, runId);
-                moveStatusIfCurrent(
-                        taskId, workspaceId, fromStatus, TaskStatus.RUNNING, 30, "retry", "retrying");
-                return revision;
-            });
-        } catch (RuntimeException ex) {
-            releaseTaskSlot(taskId, workspaceId);
-            throw ex;
-        }
-        try {
-            // 重试行已切到新 runId；控制写入或提交失败必须形成明确终态，不能遗留 RUNNING。
-            agentControlClient.setControl(taskId, TaskControlRedis.CONTROL_RUNNING, ttl);
-            taskControlRedis.setControl(taskId, TaskControlRedis.CONTROL_RUNNING, ttl);
-            // 全量 stream 重跑同 taskId（event_no 继续递增）
-            taskExecutionService.executeStream(
-                    taskId, workspaceId, row.getCreatorId(), row.getQuery(), row.getTraceId(), false,
-                    runId, nextPlanRevision == null ? 1 : nextPlanRevision);
-        } catch (RejectedExecutionException ex) {
-            markFailedSync(
-                    taskId, workspaceId, runId,
-                    "EXECUTOR_REJECTED", "task executor queue full");
-            trySetAgentControl(taskId, TaskControlRedis.CONTROL_CANCELLED, ttl);
-            releaseTaskSlot(taskId, workspaceId);
-            throw new BusinessException(ErrorCode.OPERATION_ERROR, "EXECUTOR_REJECTED: task executor busy");
-        } catch (RuntimeException ex) {
-            markFailedSync(
-                    taskId, workspaceId, runId,
-                    "RETRY_SUBMIT_FAILED", "retry execution could not be submitted");
-            trySetAgentControl(taskId, TaskControlRedis.CONTROL_CANCELLED, ttl);
-            releaseTaskSlot(taskId, workspaceId);
-            throw ex;
-        }
-        return new CreateTaskAcceptedResponse(taskId, TaskStatus.RUNNING.name(), row.getTraceId());
+        return lifecycleCoordinator.retry(workspaceId, taskId);
     }
 
     /** 插入 CREATED 状态任务 */
@@ -512,11 +381,6 @@ public class ResearchTaskServiceImpl extends ServiceImpl<ResearchTaskMapper, Res
         return task;
     }
 
-    private int nextPlanRevisionNo(String taskId) {
-        var latest = taskPlanRevisionMapper.findLatestByTask(taskId);
-        return latest == null ? 1 : latest.getRevisionNo() + 1;
-    }
-
     /** 任务控制仅允许创建者或工作空间管理员。 */
     private ResearchTask requireControllableTask(
             String workspaceId, String taskId, CurrentWorkspaceAccess actor) {
@@ -532,14 +396,6 @@ public class ResearchTaskServiceImpl extends ServiceImpl<ResearchTaskMapper, Res
                 taskId,
                 workspaceId,
                 permitId -> concurrencyService.release(workspaceId, permitId));
-    }
-
-    private void publishStoredEvent(String taskId, TaskEventService.StoredEvent event) {
-        if (event == null) {
-            return;
-        }
-        taskControlRedis.publishEvent(taskId, event.json());
-        sseHub.broadcastLocal(taskId, event.eventNo(), "TASK_RESULT", event.json());
     }
 
     private void markFailedSync(String taskId, String workspaceId, String code, String message) {
@@ -566,28 +422,6 @@ public class ResearchTaskServiceImpl extends ServiceImpl<ResearchTaskMapper, Res
                     runId == null ? row.getCurrentRunId() : runId,
                     code, truncate(message, 1024));
         });
-    }
-
-    /**
-     * 恢复操作在远端控制、Java Redis 或线程池提交任一阶段失败时，将可见状态补偿回 PAUSED。
-     * 补偿调用采用 best effort，不能覆盖最初的失败原因；CAS 返回 0 表示另一终态已抢先生效。
-     */
-    private void restorePausedAfterResumeFailure(String taskId, String workspaceId, int ttl) {
-        taskControlRedis.setControl(taskId, TaskControlRedis.CONTROL_PAUSED, ttl);
-        trySetAgentControl(taskId, TaskControlRedis.CONTROL_PAUSED, ttl);
-        mapper.updateStatusIfCurrent(
-                taskId, workspaceId, TaskStatus.RUNNING.name(), TaskStatus.PAUSED.name(), null, null);
-        releaseTaskSlot(taskId, workspaceId);
-    }
-
-    /** 补偿性远端控制失败只记录稳定分类，不打印响应体、主机信息或原始异常消息。 */
-    private void trySetAgentControl(String taskId, String value, int ttl) {
-        try {
-            agentControlClient.setControl(taskId, value, ttl);
-        } catch (RuntimeException compensationFailure) {
-            log.warn("Agent control compensation failed taskId={} value={} type={}",
-                    taskId, value, compensationFailure.getClass().getSimpleName());
-        }
     }
 
     void advance(

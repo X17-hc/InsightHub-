@@ -1,5 +1,10 @@
 package com.hechang.insighthub.service.impl;
 
+import com.hechang.insighthub.service.execution.TaskEventSideEffectHandler;
+import com.hechang.insighthub.service.realtime.TaskEventSseHub;
+import com.hechang.insighthub.service.task.TaskEventService;
+import com.hechang.insighthub.service.task.TaskResultFinalizer;
+import com.hechang.insighthub.service.task.TaskStreamLease;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -78,6 +83,10 @@ public class TaskExecutionServiceImpl implements TaskExecutionService {
         // generation 使 pause/retry 后迟到的旧回调失效；它不是持久化租约。
         String generation = streamLease.acquire(taskId);
         AtomicInteger badLines = new AtomicInteger();
+        ResearchTask taskSnapshot = researchTaskMapper.findByIdAndWorkspace(taskId, workspaceId);
+        String effectiveRunId = requestedRunId == null || requestedRunId.isBlank()
+                ? taskSnapshot == null ? null : taskSnapshot.getCurrentRunId()
+                : requestedRunId;
         try {
             int timeout = taskProperties.getDefaultTimeoutSeconds();
             if (resume) {
@@ -90,8 +99,7 @@ public class TaskExecutionServiceImpl implements TaskExecutionService {
                 }
             } else {
                 long nextEventId = taskEventService.maxEventNo(taskId) + 1;
-                ResearchTask currentTask = researchTaskMapper.findByIdAndWorkspace(taskId, workspaceId);
-                List<String> kbIds = parseKbIds(currentTask);
+                List<String> kbIds = parseKbIds(taskSnapshot);
                 if (command != null) {
                     agentStreamClient.streamTask(command, timeout, nextEventId <= 1 ? null : nextEventId,
                             node -> handleLine(taskId, workspaceId, node, badLines, generation));
@@ -99,7 +107,7 @@ public class TaskExecutionServiceImpl implements TaskExecutionService {
                     String idem = taskId + "-stream-" + System.currentTimeMillis();
                     agentStreamClient.streamTask(taskId, workspaceId, userId, query, traceId, timeout,
                             nextEventId <= 1 ? null : nextEventId, idem, requestedRunId, planRevision, kbIds,
-                            currentTask != null && Boolean.TRUE.equals(currentTask.getEnableDataAnalysis()),
+                            taskSnapshot != null && Boolean.TRUE.equals(taskSnapshot.getEnableDataAnalysis()),
                             node -> handleLine(taskId, workspaceId, node, badLines, generation));
                 }
             }
@@ -112,7 +120,8 @@ public class TaskExecutionServiceImpl implements TaskExecutionService {
                     && !TaskStatus.PAUSED.matches(row.getStatus())
                     && !TaskStatus.WAITING_APPROVAL.matches(row.getStatus())) {
                 resultFinalizer.markFailed(
-                        taskId, workspaceId, null, "AGENT_STREAM_INCOMPLETE", "stream ended without result");
+                        taskId, workspaceId, effectiveRunId,
+                        "AGENT_STREAM_INCOMPLETE", "stream ended without result");
             }
         } catch (Exception ex) {
             if (!streamLease.isCurrent(taskId, generation)) {
@@ -121,7 +130,8 @@ public class TaskExecutionServiceImpl implements TaskExecutionService {
             }
             log.error("executeStream failed taskId={}", taskId, ex);
             resultFinalizer.markFailed(
-                    taskId, workspaceId, null, "AGENT_STREAM_FAILED", "agent stream execution failed");
+                    taskId, workspaceId, effectiveRunId,
+                    "AGENT_STREAM_FAILED", "agent stream execution failed");
             taskControlRedis.setControl(
                     taskId,
                     TaskControlRedis.CONTROL_CANCELLED,

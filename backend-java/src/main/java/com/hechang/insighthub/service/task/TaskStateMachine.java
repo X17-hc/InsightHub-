@@ -1,4 +1,4 @@
-package com.hechang.insighthub.service.impl;
+package com.hechang.insighthub.service.task;
 
 import java.util.EnumMap;
 import java.util.EnumSet;

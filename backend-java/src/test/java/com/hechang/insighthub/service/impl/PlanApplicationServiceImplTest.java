@@ -1,5 +1,6 @@
 package com.hechang.insighthub.service.impl;
 
+import com.hechang.insighthub.service.task.TaskEventService;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verify;

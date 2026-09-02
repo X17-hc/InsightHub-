@@ -1,4 +1,4 @@
-package com.hechang.insighthub.config;
+package com.hechang.insighthub.bootstrap;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -16,6 +16,7 @@ import com.mybatisflex.core.query.QueryWrapper;
 import com.hechang.insighthub.model.entity.SysUser;
 import com.hechang.insighthub.model.entity.Workspace;
 import com.hechang.insighthub.model.entity.WorkspaceMember;
+import com.hechang.insighthub.config.DemoProperties;
 
 import lombok.RequiredArgsConstructor;
 
@@ -24,11 +25,9 @@ import lombok.RequiredArgsConstructor;
  */
 @Component
 @RequiredArgsConstructor
-public class DemoDataSeed implements ApplicationRunner {
+public class DemoDataInitializer implements ApplicationRunner {
 
-    private static final Logger log = LoggerFactory.getLogger(DemoDataSeed.class);
-    private static final String DEMO_PASSWORD = "demo123456";
-
+    private static final Logger log = LoggerFactory.getLogger(DemoDataInitializer.class);
     private final DemoProperties demoProperties;
     private final PasswordEncoder passwordEncoder;
     private final SysUserMapper sysUserMapper;
@@ -42,7 +41,12 @@ public class DemoDataSeed implements ApplicationRunner {
             log.info("Demo seed skipped (insighthub.demo.seed-enabled=false)");
             return;
         }
-        String hash = passwordEncoder.encode(DEMO_PASSWORD);
+        String password = demoProperties.getPassword();
+        if (password == null || password.length() < 12) {
+            throw new IllegalStateException(
+                    "DEMO_PASSWORD must contain at least 12 characters when demo seed is enabled");
+        }
+        String hash = passwordEncoder.encode(password);
         seedUser(demoProperties.getUserId(), "demo", "demo@insighthub.local", "Demo User A", hash);
         seedUser(demoProperties.getUserBId(), "demob", "demob@insighthub.local", "Demo User B", hash);
 

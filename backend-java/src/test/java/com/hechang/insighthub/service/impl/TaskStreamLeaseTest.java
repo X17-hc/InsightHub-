@@ -1,5 +1,6 @@
 package com.hechang.insighthub.service.impl;
 
+import com.hechang.insighthub.service.task.TaskStreamLease;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
